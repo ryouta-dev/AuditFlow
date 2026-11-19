@@ -23,9 +23,11 @@ import {
   scoreFor,
   statusLabel,
   summarize,
+  summarizeConformity,
   type Row,
 } from '@/lib/domain';
 import { inspectionData } from '@/features/overview/dashboard';
+import { ConformityCounts } from '@/features/audits/audits';
 import { useWorkspace } from '@/features/workspace/context';
 import { Alert, Empty, Link, PageTitle } from '@/features/workspace/ui';
 
@@ -72,7 +74,7 @@ export function Reports() {
       </div>
       {reports.length ? (
         <div className="template-grid">
-          {reports.map(({ row, version, score }) => (
+          {reports.map(({ row, version, score, outcomes }) => (
             <Link
               href={`/reports/${row.id}`}
               className="template-card panel"
@@ -88,7 +90,11 @@ export function Reports() {
               <div className="template-meta">
                 <span>{version?.data.name}</span>
                 <span>
-                  {score === null ? t('N/A') : formatPercent(score, locale)}
+                  {outcomes
+                    ? t('Nonconformities: {count}', { count: outcomes.no })
+                    : score === null
+                      ? t('N/A')
+                      : formatPercent(score, locale)}
                 </span>
               </div>
               <div className="template-foot">
@@ -132,6 +138,10 @@ export function Report({
   const [error, setError] = useState('');
   const answers = answerIndex(rowsOf(rows, 'answer'), audit.id);
   const summary = summarize(version.data, answers);
+  const outcomes =
+    version.data.assessment === 'conformity'
+      ? summarizeConformity(version.data, answers)
+      : undefined;
   const actions = rowsOf(rows, 'capa');
   const findings = rowsOf(rows, 'finding')
     .filter((finding) => finding.data.auditId === audit.id)
@@ -150,7 +160,11 @@ export function Report({
         (op.change.kind === 'capa' && findingIds.has(op.change.data.findingId)),
     );
   const date = formatDate(audit.data.date, locale);
-  const methodology = t(methodologyKey);
+  const methodology = t(
+    outcomes
+      ? 'Recorded outcomes apply to the checklist criteria and the evidence available during this inspection.'
+      : methodologyKey,
+  );
   const data = version.data.sections.flatMap((section) =>
     section.questions.map((item) => {
       const answer = answers[item.id]?.data;
@@ -159,7 +173,9 @@ export function Report({
         id: item.id,
         section: section.title,
         question: item.title,
-        response: responseLabel(item, answer?.value, t),
+        response: responseLabel(item, answer?.value, t, Boolean(outcomes)),
+        method: item.description,
+        source: item.source ?? '',
         notes: answer?.notes ?? '',
         weight: item.weight,
         score,
@@ -178,6 +194,7 @@ export function Report({
         version,
         date,
         score: summary.score,
+        outcomes,
         answered: summary.count,
         total: summary.total,
         data,
@@ -264,14 +281,16 @@ export function Report({
                 {t('Version {number}', { number: version.data.number })}
               </strong>
             </div>
-            <div>
-              <span>{t('Compliance score')}</span>
-              <strong>
-                {summary.score === null
-                  ? t('N/A')
-                  : formatPercent(summary.score, locale)}
-              </strong>
-            </div>
+            {!outcomes && (
+              <div>
+                <span>{t('Compliance score')}</span>
+                <strong>
+                  {summary.score === null
+                    ? t('N/A')
+                    : formatPercent(summary.score, locale)}
+                </strong>
+              </div>
+            )}
             <div>
               <span>{t('Responses')}</span>
               <strong>
@@ -287,6 +306,12 @@ export function Report({
             </p>
           )}
         </header>
+        {outcomes && (
+          <section className="report-section">
+            <h3>{t('Outcome summary')}</h3>
+            <ConformityCounts counts={outcomes} />
+          </section>
+        )}
         <section className="report-section">
           <h3>{t('Scope and methodology')}</h3>
           <p>
@@ -297,7 +322,7 @@ export function Report({
               })}
           </p>
           <p>{methodology}</p>
-          {summary.incompleteScored > 0 && (
+          {!outcomes && summary.incompleteScored > 0 && (
             <p>
               {t('Unanswered scored questions: {count}', {
                 count: summary.incompleteScored,
@@ -311,10 +336,10 @@ export function Report({
             <table className="data-table print-table">
               <thead>
                 <tr>
-                  <th scope="col">{t('Question')}</th>
+                  <th scope="col">{t(outcomes ? 'Criterion' : 'Question')}</th>
                   <th scope="col">{t('Response')}</th>
-                  <th scope="col">{t('Score')}</th>
-                  <th scope="col">{t('Notes')}</th>
+                  {!outcomes && <th scope="col">{t('Score')}</th>}
+                  <th scope="col">{t(outcomes ? 'Observation' : 'Notes')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -323,13 +348,25 @@ export function Report({
                     <td>
                       <small>{item.section}</small>
                       <strong>{item.question}</strong>
+                      {outcomes && item.method && (
+                        <small>
+                          {t('How to verify')} · {item.method}
+                        </small>
+                      )}
+                      {outcomes && item.source && (
+                        <small>
+                          {t('Requirement reference')} · {item.source}
+                        </small>
+                      )}
                     </td>
                     <td>{item.response}</td>
-                    <td>
-                      {item.score === null
-                        ? '—'
-                        : formatPercent(item.score * 100, locale)}
-                    </td>
+                    {!outcomes && (
+                      <td>
+                        {item.score === null
+                          ? '—'
+                          : formatPercent(item.score * 100, locale)}
+                      </td>
+                    )}
                     <td className="preserve">{item.notes || '—'}</td>
                   </tr>
                 ))}
@@ -337,47 +374,49 @@ export function Report({
             </table>
           </div>
         </section>
-        <section className="report-section">
-          <h3>{t('Findings and corrective actions')}</h3>
-          {findings.length ? (
-            findings.map(({ finding, action }) => (
-              <div className="report-finding" key={finding.id}>
-                <div>
-                  <strong>{finding.data.title}</strong>
-                  <span>
-                    {statusLabel(t, finding.data.severity)} ·{' '}
-                    {statusLabel(t, finding.data.status)}
-                  </span>
+        {(!outcomes || findings.length > 0) && (
+          <section className="report-section">
+            <h3>{t('Findings and corrective actions')}</h3>
+            {findings.length ? (
+              findings.map(({ finding, action }) => (
+                <div className="report-finding" key={finding.id}>
+                  <div>
+                    <strong>{finding.data.title}</strong>
+                    <span>
+                      {statusLabel(t, finding.data.severity)} ·{' '}
+                      {statusLabel(t, finding.data.status)}
+                    </span>
+                  </div>
+                  {finding.data.details && <p>{finding.data.details}</p>}
+                  {action && (
+                    <dl>
+                      <dt>{t('Action')}</dt>
+                      <dd>{action.data.corrective}</dd>
+                      <dt>{t('Prevention')}</dt>
+                      <dd>{action.data.preventive || '—'}</dd>
+                      <dt>{t('Root cause')}</dt>
+                      <dd>{action.data.rootCause || '—'}</dd>
+                      <dt>{t('Owner')}</dt>
+                      <dd>{action.data.assignee || '—'}</dd>
+                      <dt>{t('Due date')}</dt>
+                      <dd>
+                        {action.data.dueDate
+                          ? formatDate(action.data.dueDate, locale)
+                          : '—'}
+                      </dd>
+                      <dt>{t('Status')}</dt>
+                      <dd>{statusLabel(t, action.data.status)}</dd>
+                      <dt>{t('Verification')}</dt>
+                      <dd>{action.data.verification || '—'}</dd>
+                    </dl>
+                  )}
                 </div>
-                {finding.data.details && <p>{finding.data.details}</p>}
-                {action && (
-                  <dl>
-                    <dt>{t('Action')}</dt>
-                    <dd>{action.data.corrective}</dd>
-                    <dt>{t('Prevention')}</dt>
-                    <dd>{action.data.preventive || '—'}</dd>
-                    <dt>{t('Root cause')}</dt>
-                    <dd>{action.data.rootCause || '—'}</dd>
-                    <dt>{t('Owner')}</dt>
-                    <dd>{action.data.assignee || '—'}</dd>
-                    <dt>{t('Due date')}</dt>
-                    <dd>
-                      {action.data.dueDate
-                        ? formatDate(action.data.dueDate, locale)
-                        : '—'}
-                    </dd>
-                    <dt>{t('Status')}</dt>
-                    <dd>{statusLabel(t, action.data.status)}</dd>
-                    <dt>{t('Verification')}</dt>
-                    <dd>{action.data.verification || '—'}</dd>
-                  </dl>
-                )}
-              </div>
-            ))
-          ) : (
-            <p>{t('No findings recorded.')}</p>
-          )}
-        </section>
+              ))
+            ) : (
+              <p>{t('No findings recorded.')}</p>
+            )}
+          </section>
+        )}
         {conclusion !== undefined && (
           <section className="report-section ai-report-conclusion">
             <h3>{t('AI-assisted conclusion')}</h3>

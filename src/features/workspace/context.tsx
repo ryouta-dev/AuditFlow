@@ -12,6 +12,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { DEMO, Repository, type Conflict, type Mutation } from '@/lib/local';
 import { demoChanges } from '@/lib/demo';
 import { synchronize, transport } from '@/lib/sync';
+import { pagesPath } from '@/lib/hosting';
 import type { Row } from '@/lib/domain';
 import type { Identity } from './session';
 import { useLanguage } from './language';
@@ -107,7 +108,7 @@ export function WorkspaceProvider({
     check();
     worker.addEventListener('controllerchange', check);
     worker
-      .register('/sw.js', { updateViaCache: 'none' })
+      .register(`${pagesPath}/sw.js`, { updateViaCache: 'none' })
       .catch(() => setOfflineReady(false));
     return () => worker.removeEventListener('controllerchange', check);
   }, []);

@@ -15,6 +15,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { statusLabel } from '@/lib/domain';
+import { browserPath, routeHref } from '@/lib/hosting';
 
 const routeEvent = 'auditflow:navigate';
 function routeSubscribe(fn: () => void) {
@@ -26,16 +27,13 @@ function routeSubscribe(fn: () => void) {
   };
 }
 export function usePath() {
-  return useSyncExternalStore(
-    routeSubscribe,
-    () => location.pathname,
-    () => '/',
-  );
+  return useSyncExternalStore(routeSubscribe, browserPath, () => '/');
 }
 export function go(path: string, replace = false) {
-  if (location.pathname === path && !location.search && !location.hash) return;
+  const url = routeHref(path);
+  if (location.pathname + location.search === url && !location.hash) return;
   const method = replace ? 'replaceState' : 'pushState';
-  history[method](null, '', path);
+  history[method](null, '', url);
   window.dispatchEvent(new Event(routeEvent));
   window.scrollTo(0, 0);
 }
@@ -46,7 +44,7 @@ export function Link({
 }: ComponentProps<'a'> & { href: string }) {
   return (
     <a
-      href={href}
+      href={routeHref(href)}
       {...props}
       onClick={(event) => {
         onClick?.(event);

@@ -7,6 +7,8 @@ export default defineConfig([
   ...typescript,
   globalIgnores([
     '.next/**',
+    '.next-pages/**',
+    'out-pages/**',
     'next-env.d.ts',
     'public/sw.js',
     'playwright-report/**',

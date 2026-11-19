@@ -8,7 +8,7 @@ import { readJson } from './json';
 
 const formats: Record<AiTask, string> = {
   checklist:
-    '{"name":"...","description":"...","sections":[{"title":"...","questions":[{"title":"...","description":"...","type":"boolean|text|number|date","required":true,"weight":1,"severity":"low|medium|high|critical"}]}]}',
+    '{"name":"...","description":"...","sections":[{"title":"...","questions":[{"title":"...","description":"...","source":"..."}]}]}',
   inspection: '{"text":"..."}',
   capa: '{"rootCause":"...","corrective":"...","preventive":"..."}',
   report: '{"text":"..."}',
@@ -18,18 +18,17 @@ const formats: Record<AiTask, string> = {
 
 const instructions: Record<AiTask, string> = {
   checklist:
-    'Draft a practical inspection checklist with 1–3 sections and 1–5 questions per section. If reviewed source text is present, turn its relevant requirements into verifiable questions and avoid inventing requirements. Use short titles and descriptions. Weight is an integer 1–5. Choose one literal for each enum.',
+    'Draft a concise inspection checklist. Use 1–3 sections with 1–5 criteria each. For a long assignment, prioritize the main deliverables and acceptance requirements in up to 10 criteria overall. Each title states one observable condition in 160 characters or fewer. Use at most one short sentence for the scope and one for each verification method. Cite an identifiable source supplied by the user or omit the source. For a general request without a source, suggest practical criteria for review without presenting them as legal or standards requirements. Do not invent thresholds or results.',
   inspection:
     'Answer the question about the provided inspection only. Explain relevant gaps and uncertainty. When the information is insufficient, say what is missing.',
   capa: 'Draft a plausible root-cause hypothesis, a corrective action, and a preventive action based on the supplied observation. Mark hypotheses as such. Do not invent facts or verification outcomes.',
   report:
     'Write a short auditor conclusion for the provided inspection. Summarize confirmed observations and limitations. Identify any open actions without certifying compliance. Do not change or recompute the supplied score.',
   review:
-    'Suggest up to three evidence-supported findings from the supplied responses. Identify the response that supports each proposed finding in details. Treat unanswered and not-applicable responses as gaps, never as failures. Return an empty findings array if nothing supports a finding.',
+    'Suggest up to three evidence-supported findings from the supplied responses. Identify the response that supports each proposed finding in details. Unanswered, not-applicable and not-verified responses never establish nonconformity. Return an empty findings array if nothing supports a finding.',
 };
 
 const language = { ru: 'Russian', kk: 'Kazakh', en: 'English' } as const;
-const maxOutputTokens = 2400;
 const maxVendorBytes = 128 * 1024;
 
 type VendorReply = {
@@ -46,6 +45,7 @@ export async function generate(
   signal: AbortSignal,
 ) {
   const { task, locale, config, prompt, context } = input;
+  const maxOutputTokens = task === 'checklist' ? 4800 : 2400;
   const system = [
     'You are AuditFlow’s bounded inspection drafting assistant.',
     instructions[task],
@@ -137,6 +137,12 @@ export async function generate(
     )) as VendorReply;
     const choice = payload.choices?.[0];
     const candidate = payload.candidates?.[0];
+    if (
+      gemini
+        ? candidate?.finishReason === 'MAX_TOKENS'
+        : choice?.finish_reason === 'length'
+    )
+      return 'response_truncated';
     const raw = gemini
       ? candidate?.finishReason === 'STOP' &&
         candidate.content?.parts

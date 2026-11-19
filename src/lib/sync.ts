@@ -3,6 +3,7 @@ import { Repository, type Mutation } from './local';
 import { supabase } from './supabase';
 
 type RemoteRow = Omit<Row, 'updatedAt'> & { updated_at: string };
+const recordColumns = 'id,kind,version,revision,deleted,updated_at,data';
 type PushResult =
   | { state: 'applied'; row: Row }
   | { state: 'conflict'; row: Row | null; reason?: string };
@@ -35,6 +36,27 @@ export const transport: Transport = {
       p_deleted: deleted,
     });
     const result = await (signal ? request.abortSignal(signal) : request);
+    if (
+      kind === 'audit' &&
+      result.error?.code === '23514' &&
+      result.error.message === 'AuditFlow: incomplete conformity results'
+    ) {
+      const current = supabase
+        .from('auditflow_records')
+        .select(recordColumns)
+        .eq('owner_id', owner)
+        .eq('id', id);
+      const remote = await (
+        signal ? current.abortSignal(signal) : current
+      ).maybeSingle();
+      if (remote.error) throw new Error(remote.error.message);
+      return {
+        state: 'conflict',
+        row: remote.data ? decode(remote.data as RemoteRow) : null,
+        reason:
+          'The server is missing an observation or outcome. Keep the server status and review the checklist before completing again.',
+      };
+    }
     if (result.error) throw new Error(result.error.message);
     const payload = result.data as
       | { state: 'applied'; row: RemoteRow }
@@ -51,7 +73,7 @@ export const transport: Transport = {
     if (!supabase) throw new Error('Connect Supabase to synchronize.');
     const request = supabase
       .from('auditflow_records')
-      .select('id,kind,version,revision,deleted,updated_at,data')
+      .select(recordColumns)
       .eq('owner_id', owner)
       .gt('revision', cursor)
       .order('revision')

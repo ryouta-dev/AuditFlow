@@ -269,14 +269,65 @@ describe('AI gateway', () => {
       authenticate: async () => 'verified-actor',
       send,
     });
-    for (let i = 0; i < 3; i++) {
+    for (const error of [
+      'invalid_proposal',
+      'response_truncated',
+      'invalid_proposal',
+    ]) {
       const response = await handle(make());
       expect(response.status).toBe(502);
-      expect(await response.json()).toEqual({ error: 'invalid_proposal' });
+      expect(await response.json()).toEqual({ error });
     }
     expect(await (await handle(make())).json()).toEqual({
       error: 'provider_auth',
     });
+  });
+
+  it('accepts a checklist for a long assignment with only observable criteria and optional references', async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(
+      chat({
+        name: 'Проверка задания',
+        sections: [
+          {
+            title: 'Результат работы',
+            questions: [
+              {
+                title: 'Отчёт содержит выводы',
+                source: null,
+                type: 'checkbox',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const handle = createAiGateway({
+      authenticate: async () => 'verified-actor',
+      send,
+    });
+    const response = await handle(
+      make({
+        ...request,
+        task: 'checklist',
+        prompt: '',
+        context: 'Отчёт содержит выводы. '.repeat(350),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      task: 'checklist',
+      proposal: {
+        sections: [
+          {
+            questions: [
+              { title: 'Отчёт содержит выводы', description: '', source: '' },
+            ],
+          },
+        ],
+      },
+    });
+    const [, init] = send.mock.calls[0];
+    expect(JSON.parse(String(init?.body)).max_completion_tokens).toBe(4800);
   });
 
   it('permits only one provider request per account at a time', async () => {

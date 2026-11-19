@@ -70,6 +70,7 @@ const question = z.object({
   id: uuid,
   title: name,
   description: note,
+  source: z.string().max(400).optional(),
   type: z.enum(types),
   required: z.boolean(),
   weight: z.number().gt(0).max(1000),
@@ -85,6 +86,7 @@ const blueprint = z.object({
   name,
   description: note,
   sections: z.array(section).max(20),
+  assessment: z.literal('conformity').optional(),
 });
 const event = z.object({ status: z.enum(inspectionStatuses), at: timestamp });
 
@@ -227,6 +229,11 @@ export function validateBlueprint(
     ids.add(block.id);
     for (const item of block.questions) {
       if (!item.title.trim()) return t('Give every question a title.');
+      if (
+        data.assessment === 'conformity' &&
+        (item.type !== 'boolean' || !item.required || item.weight !== 1)
+      )
+        return t('Every checklist item needs a conformity decision.');
       if (ids.has(item.id))
         return t('Section and question IDs must be unique.');
       ids.add(item.id);
@@ -338,12 +345,68 @@ export function summarize(blueprint: Blueprint, answers: Answers) {
   };
 }
 
+export const conformityOptions = [
+  { value: 'yes', label: 'Conforms' },
+  { value: 'no', label: 'Does not conform' },
+  { value: 'na', label: 'Not applicable' },
+  { value: 'unverified', label: 'Not verified' },
+] as const satisfies readonly { value: string; label: Message }[];
+
+export function summarizeConformity(blueprint: Blueprint, answers: Answers) {
+  const counts = { yes: 0, no: 0, na: 0, unverified: 0 };
+  for (const section of blueprint.sections) {
+    for (const item of section.questions) {
+      const value = answers[item.id]?.data.value;
+      if (
+        value === 'yes' ||
+        value === 'no' ||
+        value === 'na' ||
+        value === 'unverified'
+      )
+        counts[value]++;
+    }
+  }
+  return counts;
+}
+
+export function needsEvidence(value: Data<'answer'>['value'] | undefined) {
+  return value === 'no' || value === 'na' || value === 'unverified';
+}
+
+export function completionIssues(blueprint: Blueprint, answers: Answers) {
+  return blueprint.sections.flatMap((section) =>
+    section.questions.flatMap<{
+      item: Question;
+      reason: 'decision' | 'evidence';
+    }>((item) => {
+      const entry = answers[item.id]?.data;
+      if (blueprint.assessment !== 'conformity') {
+        return !answered(entry?.value) && item.required
+          ? [{ item, reason: 'decision' as const }]
+          : [];
+      }
+      const recognized = conformityOptions.some(
+        (option) => option.value === entry?.value,
+      );
+      if (!recognized) return [{ item, reason: 'decision' as const }];
+      return needsEvidence(entry?.value) && !entry?.notes.trim()
+        ? [{ item, reason: 'evidence' as const }]
+        : [];
+    }),
+  );
+}
+
 export function responseLabel(
   item: Question,
   value: Data<'answer'>['value'] | undefined,
   t = translate('en'),
+  conformity = false,
 ) {
   if (!answered(value)) return t('Unanswered');
+  if (item.type === 'boolean' && (conformity || value === 'unverified')) {
+    const outcome = conformityOptions.find((option) => option.value === value);
+    return outcome ? t(outcome.label) : t('Unanswered');
+  }
   if (item.type === 'boolean')
     return t(value === 'yes' ? 'Yes' : value === 'no' ? 'No' : 'N/A');
   if (Array.isArray(value))

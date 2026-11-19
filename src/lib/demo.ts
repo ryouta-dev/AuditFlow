@@ -63,10 +63,15 @@ export async function demoChanges(
   const versions = checklistNames.map((name, i) => {
     const templateId = crypto.randomUUID();
     const snapshotId = crypto.randomUUID();
+    const conformity = i === 0;
     const questions: Question[] = topics[i].map((title, j) => ({
       ...blankQuestion(),
       title: t(title),
-      weight: j === 0 ? 3 : j === 1 ? 2 : 1,
+      description:
+        conformity && j === 0
+          ? t('Walk the exit route and look for obstructions.')
+          : '',
+      weight: conformity ? 1 : j === 0 ? 3 : j === 1 ? 2 : 1,
       severity: j === 0 ? 'high' : 'medium',
     }));
     const rating: Question = {
@@ -88,13 +93,18 @@ export async function demoChanges(
     const blueprint = {
       name: t(name),
       description: t(scopes[i]),
+      ...(conformity ? { assessment: 'conformity' as const } : {}),
       sections: [
         { id: crypto.randomUUID(), title: t('Control checks'), questions },
-        {
-          id: crypto.randomUUID(),
-          title: t('Condition and notes'),
-          questions: [rating, observation],
-        },
+        ...(!conformity
+          ? [
+              {
+                id: crypto.randomUUID(),
+                title: t('Condition and notes'),
+                questions: [rating, observation],
+              },
+            ]
+          : []),
       ],
     };
     changes.push(
@@ -114,7 +124,10 @@ export async function demoChanges(
         data: { ...blueprint, status: 'published' },
       },
     );
-    return { id: snapshotId, questions: [...questions, rating, observation] };
+    return {
+      id: snapshotId,
+      questions: conformity ? questions : [...questions, rating, observation],
+    };
   });
   const schedule = [
     {
@@ -259,7 +272,14 @@ export async function demoChanges(
           auditId,
           questionId: question.id,
           value,
-          notes: value === 'no' ? t('A follow-up review is required.') : '',
+          notes:
+            value === 'no'
+              ? item.version === 0
+                ? t(
+                    'Two workstations lacked the required protective equipment.',
+                  )
+                : t('A follow-up review is required.')
+              : '',
         },
       });
     }

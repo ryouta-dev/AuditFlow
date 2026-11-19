@@ -1,5 +1,7 @@
 node_modules/
 .next/
+.next-pages/
+out-pages/
 .env*
 !.env.example
 next-env.d.ts

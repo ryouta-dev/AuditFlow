@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   blankQuestion,
+  completionIssues,
   optionsFor,
   scoreFor,
   summarize,
+  summarizeConformity,
   validateBlueprint,
   type Answers,
   type Question,
@@ -102,4 +104,35 @@ describe('scoring', () => {
       ),
     ).toMatch(/distinct options/);
   });
+});
+
+it('keeps unverified and not-applicable items separate and requires a reason', () => {
+  const yes = question('Clear access');
+  const no = question('Current instructions');
+  const exception = question('Elevator inspection');
+  const unverified = question('Visitor records');
+  const missing = question('Maintenance log');
+  const blueprint = {
+    ...checklist(yes, no, exception, unverified, missing),
+    assessment: 'conformity' as const,
+  };
+  const excluded = response(exception, 'na');
+  excluded.data.notes = 'No elevator on site.';
+  const answers: Answers = {
+    [yes.id]: response(yes, 'yes'),
+    [no.id]: response(no, 'no'),
+    [exception.id]: excluded,
+    [unverified.id]: response(unverified, 'unverified'),
+  };
+  expect(summarizeConformity(blueprint, answers)).toEqual({
+    yes: 1,
+    no: 1,
+    na: 1,
+    unverified: 1,
+  });
+  expect(completionIssues(blueprint, answers)).toEqual([
+    { item: no, reason: 'evidence' },
+    { item: unverified, reason: 'evidence' },
+    { item: missing, reason: 'decision' },
+  ]);
 });

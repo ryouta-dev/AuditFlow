@@ -1,0 +1,216 @@
+@media screen {
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --ink: #f2f1fb;
+    --body: #d3d5e6;
+    --muted: #b0b5cc;
+    --canvas: #131723;
+    --surface: #1c2030;
+    --line: #353b51;
+    --accent: #7057ed;
+    --accent-dark: #c6baff;
+    --accent-soft: #302650;
+    --raised: #24293b;
+    --success-ink: #91dfbc;
+    --success-bg: #1a382f;
+    --warning-ink: #f1ce8c;
+    --warning-bg: #3a2d19;
+    --danger-ink: #ffb4c1;
+    --danger-bg: #412531;
+
+    &
+      :is(
+        .sidebar,
+        .topbar,
+        .user-dropdown,
+        .search-dialog,
+        .auth,
+        .donut > div,
+        .button.secondary,
+        .select-control,
+        .search-box,
+        .choice,
+        .tabs a[aria-current],
+        kbd
+      ) {
+      background-color: var(--surface);
+      border-color: var(--line);
+      color: var(--body);
+    }
+
+    & .breadcrumbs strong {
+      color: var(--ink);
+    }
+
+    &
+      :is(
+        .nav-label,
+        .nav-links a,
+        .icon-button,
+        .metric-top,
+        .chart-month,
+        .status-legend li,
+        .select-control select,
+        kbd,
+        label,
+        .score-cell
+      ) {
+      color: var(--body);
+    }
+
+    &
+      :is(
+        .global-search,
+        .workspace-switch,
+        .data-table th,
+        .section-index,
+        .template-meta span,
+        .option-editor,
+        .tabs,
+        .badge
+      ) {
+      background: var(--raised);
+      border-color: var(--line);
+      color: var(--body);
+    }
+
+    & :is(input:not([type='checkbox']):not([type='radio']), select, textarea) {
+      background-color: var(--canvas);
+      border-color: var(--line);
+      color: var(--ink);
+    }
+
+    & .select-control select {
+      background: transparent;
+    }
+
+    & :is(input, textarea)::placeholder {
+      color: var(--muted);
+    }
+
+    &
+      :is(
+        .workspace-icon,
+        .offline-card,
+        .offline-icon,
+        .avatar,
+        .record-icon,
+        .tile-icon,
+        .empty-icon,
+        .metric-icon.purple,
+        .question-score,
+        .chart-selection,
+        .notice,
+        .report-cover,
+        .add-section,
+        .nav-links a[aria-current],
+        .badge-in_progress,
+        .badge-pending_verification
+      ) {
+      background: var(--accent-soft);
+      border-color: var(--line);
+      color: var(--accent-dark);
+    }
+
+    &
+      :is(
+        .nav-links a:hover,
+        .sidebar-user:hover,
+        .button.secondary:hover:not(:disabled),
+        .search-result:hover,
+        .data-table tbody tr:hover,
+        .add-section:hover:not(:disabled),
+        .offline-card:hover
+      ) {
+      background: var(--raised);
+      border-color: var(--line);
+      color: var(--ink);
+    }
+
+    & .button.primary:hover:not(:disabled) {
+      background: #6147dc;
+      border-color: #6147dc;
+    }
+
+    &
+      :is(
+        .sync-pill,
+        .local-save,
+        .metric-icon.green,
+        .badge-completed,
+        .badge-published,
+        .badge-verified,
+        .badge-low,
+        .choice-yes[aria-pressed='true']
+      ) {
+      background: var(--success-bg);
+      border-color: #396453;
+      color: var(--success-ink);
+    }
+
+    &
+      :is(
+        .sync-pill.disconnected,
+        .metric-icon.amber,
+        .badge-open,
+        .badge-medium
+      ) {
+      background: var(--warning-bg);
+      border-color: #6c5430;
+      color: var(--warning-ink);
+    }
+
+    &
+      :is(
+        .sync-pill.problem,
+        .alert,
+        .badge-high,
+        .badge-critical,
+        .badge-ineffective,
+        .choice-no[aria-pressed='true'],
+        .danger-icon:hover:not(:disabled)
+      ) {
+      background: var(--danger-bg);
+      border-color: #704653;
+      color: var(--danger-ink);
+    }
+
+    & .required-mark {
+      color: var(--danger-ink);
+    }
+
+    & .danger-text {
+      color: var(--danger-ink) !important;
+    }
+
+    & .metric-icon.blue {
+      background: #253459;
+      color: #b1ceff;
+    }
+
+    & progress::-webkit-progress-bar {
+      background: var(--raised);
+    }
+
+    & .chart-plot line {
+      stroke: var(--line);
+    }
+
+    & .chart-plot circle {
+      fill: var(--surface);
+    }
+
+    & .chart-plot text {
+      fill: var(--muted);
+    }
+
+    & .auth-aside {
+      background: linear-gradient(135deg, #241945, #363072);
+    }
+
+    & ::selection {
+      color: var(--ink);
+      background: #543fb0;
+    }
+  }
+}

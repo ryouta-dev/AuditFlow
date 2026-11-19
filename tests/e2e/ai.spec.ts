@@ -108,6 +108,7 @@ test('imports an assignment and creates an editable checklist without Supabase',
                       {
                         title: 'Ширина прохода достаточна?',
                         description: '',
+                        source: 'Задание пользователя',
                         type: 'boolean',
                         required: true,
                         weight: 1,
@@ -129,10 +130,15 @@ test('imports an assignment and creates an editable checklist without Supabase',
     page.getByRole('heading', { name: 'Обзор', exact: true }),
   ).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
-  await page.getByRole('link', { name: 'ИИ-помощник', exact: true }).click();
+  await page
+    .getByRole('link', { name: 'Создать с помощью ИИ', exact: true })
+    .click();
   await expect(
-    page.getByRole('heading', { name: 'ИИ-помощник', exact: true }),
+    page.getByRole('heading', { name: 'Создать чек-лист с ИИ', exact: true }),
   ).toBeVisible();
+  const file = page.getByLabel('Загрузить файл задания');
+  const text = page.getByRole('textbox', { name: 'Текст задания' });
+  await text.fill('Вставленный текст задания');
   await page
     .getByRole('textbox', { name: 'Адрес API' })
     .fill('https://ai-fixture.example.test/v1');
@@ -140,9 +146,6 @@ test('imports an assignment and creates an editable checklist without Supabase',
   await page
     .getByRole('button', { name: 'Использовать ключ в этом сеансе' })
     .click();
-  const file = page.getByLabel('Загрузить файл задания');
-  const text = page.getByRole('textbox', { name: 'Текст задания' });
-  await text.fill('Вставленный текст задания');
   await expect(text).toHaveValue('Вставленный текст задания');
   await file.setInputFiles({
     name: 'assignment.md',
@@ -166,6 +169,27 @@ test('imports an assignment and creates an editable checklist without Supabase',
     buffer: Buffer.from(docx),
   });
   await expect(text).toHaveValue('Проверить освещение.');
+  const workbook = new Workbook();
+  workbook.addWorksheet('Требования').addRow(['Огнетушитель доступен']);
+  workbook
+    .addWorksheet('Скрытый лист', { state: 'hidden' })
+    .addRow(['Внутренняя заметка']);
+  await file.setInputFiles([
+    {
+      name: 'source.xlsx',
+      mimeType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: Buffer.from(await workbook.xlsx.writeBuffer()),
+    },
+    {
+      name: 'context.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Осмотреть проходы.'),
+    },
+  ]);
+  await expect(text).toHaveValue(
+    '[source.xlsx]\n[Требования]\nA: Огнетушитель доступен\n\n[context.txt]\nОсмотреть проходы.',
+  );
   const pdfPage = await context.newPage();
   const assignment = await (async () => {
     try {
@@ -203,6 +227,10 @@ test('imports an assignment and creates an editable checklist without Supabase',
   await expect(
     page.getByRole('textbox', { name: 'Название чек-листа' }),
   ).toHaveValue('Контроль проходов');
+  await page.getByText('Способ проверки и источник', { exact: true }).click();
+  await expect(page.getByLabel('Источник требования')).toHaveValue(
+    'Задание пользователя',
+  );
   await page
     .getByRole('button', { name: 'Сохранить черновик', exact: true })
     .click();

@@ -3,7 +3,7 @@ import {
   answerIndex,
   rowsOf,
   schemas,
-  summarize,
+  completionIssues,
   type Change,
   type Data,
   type Row,
@@ -141,7 +141,7 @@ export class Repository {
             rowsOf(await this.records(), 'answer'),
             id,
           );
-          if (summarize(snapshot.data, answers).missing.length) return false;
+          if (completionIssues(snapshot.data, answers).length) return false;
         }
         await this.commit({
           kind: 'audit',

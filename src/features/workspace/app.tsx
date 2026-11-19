@@ -1,6 +1,7 @@
 'use client';
 
 import { LanguageProvider, LanguageSelect, useLanguage } from './language';
+import { ThemeProvider, ThemeSelect } from './theme';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -41,8 +42,8 @@ const navigation = [
   { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Checklists', href: '/templates', icon: Layers3 },
   { label: 'Inspections', href: '/audits', icon: ClipboardList },
-  { label: 'Findings & CAPA', href: '/findings', icon: Flag },
   { label: 'Reports', href: '/reports', icon: FileText },
+  { label: 'Findings & CAPA', href: '/findings', icon: Flag },
   { label: 'Analytics', href: '/analytics', icon: ChartNoAxesCombined },
   { label: 'Settings', href: '/settings/profile', icon: Settings2 },
 ] as const;
@@ -186,7 +187,7 @@ function Shell({
         </div>
         <div className="nav-label">{t('Workspace')}</div>
         <nav className="nav-links" aria-label={t('Workspace')}>
-          {navigation.slice(0, -1).map(({ label, href, icon: Icon }) => (
+          {navigation.slice(0, 4).map(({ label, href, icon: Icon }) => (
             <Link
               key={href}
               href={href}
@@ -197,6 +198,27 @@ function Shell({
               <span>{t(label)}</span>
             </Link>
           ))}
+          <details
+            className="workspace-more"
+            key={current.href}
+            open={
+              current.href === '/findings' || current.href === '/analytics'
+                ? true
+                : undefined
+            }
+          >
+            <summary>{t('More')}</summary>
+            {navigation.slice(4, -1).map(({ label, href, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                aria-current={current.label === label ? 'page' : undefined}
+                onClick={() => setMobile(false)}
+              >
+                <Icon size={18} strokeWidth={1.85} /> <span>{t(label)}</span>
+              </Link>
+            ))}
+          </details>
         </nav>
         <div className="nav-label preferences">{t('Preferences')}</div>
         <nav className="nav-links" aria-label={t('Preferences')}>
@@ -313,6 +335,7 @@ function Shell({
                 </Link>
                 <div className="menu-language">
                   <LanguageSelect />
+                  <ThemeSelect />
                 </div>
               </div>
             </details>
@@ -429,7 +452,9 @@ function Workspace({
   else if (section === 'templates') {
     const template = rowsOf(rows, 'template').find((item) => item.id === id);
     content =
-      id === 'new' ? (
+      id === 'new' && action === 'ai' ? (
+        <AiStudio key={path} checklistOnly />
+      ) : id === 'new' ? (
         <TemplateEditor key="new" />
       ) : id ? (
         template ? (
@@ -448,7 +473,7 @@ function Workspace({
     if (section === 'audits')
       content =
         id === 'new' ? (
-          <NewAudit />
+          <NewAudit key={path} initialTemplateId={action} />
         ) : id ? (
           audit && version ? (
             <AuditDetail key={id} row={audit} snapshot={version} />
@@ -513,7 +538,9 @@ export function App() {
   }, [path, session.identity]);
   return (
     <LanguageProvider owner={session.identity?.id}>
-      <AppContent path={path} session={session} />
+      <ThemeProvider>
+        <AppContent path={path} session={session} />
+      </ThemeProvider>
     </LanguageProvider>
   );
 }

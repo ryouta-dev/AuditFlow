@@ -1,6 +1,6 @@
 import { maxContext } from '@/lib/ai/contracts';
 
-export const assignmentFormats = '.txt,.md,.pdf,.docx';
+export const assignmentFormats = '.txt,.md,.pdf,.docx,.xlsx';
 const maxFileBytes = 8 * 1024 * 1024;
 const maxWordXml = 2 * 1024 * 1024;
 const maxPages = 20;
@@ -63,6 +63,49 @@ async function docxText(data: Uint8Array) {
     .join('\n');
 }
 
+async function xlsxText(data: Uint8Array) {
+  const [{ unzipSync }, { Workbook }] = await Promise.all([
+    import('fflate'),
+    import('exceljs'),
+  ]);
+  let expanded = 0;
+  let entries = 0;
+  unzipSync(data, {
+    filter(entry) {
+      expanded += entry.originalSize;
+      if (++entries > 2000 || expanded > 24 * 1024 * 1024)
+        throw new Error('workbook size');
+      return false;
+    },
+  });
+  const workbook = new Workbook();
+  await workbook.xlsx.load(data.buffer as ArrayBuffer);
+  let text = '';
+  for (const sheet of workbook.worksheets) {
+    if (sheet.state !== 'visible') continue;
+    let heading = `[${sheet.name}]\n`;
+    let limited = false;
+    sheet.eachRow((row) => {
+      if (limited) return;
+      const cells: string[] = [];
+      row.eachCell((cell) => {
+        // cell.text uses the saved formula result. Formulas are never evaluated.
+        cells.push(
+          cell.text ? `${cell.address.replace(/\d+$/, '')}: ${cell.text}` : '',
+        );
+      });
+      const line = cells.filter(Boolean).join(' | ');
+      if (!line) return;
+      text += heading + line + '\n';
+      heading = '';
+      limited = text.length > maxContext;
+    });
+    if (limited) return { text, limited };
+    if (!heading) text += '\n';
+  }
+  return { text, limited: false };
+}
+
 export async function readAssignment(file: File) {
   const extension = file.name.split('.').pop()?.toLowerCase();
   if (!extension || !assignmentFormats.split(',').includes(`.${extension}`))
@@ -71,9 +114,10 @@ export async function readAssignment(file: File) {
   try {
     let text: string;
     let limited = false;
-    if (extension === 'pdf' || extension === 'docx') {
+    if (extension === 'pdf' || extension === 'docx' || extension === 'xlsx') {
       const data = new Uint8Array(await file.arrayBuffer());
       if (extension === 'pdf') ({ text, limited } = await pdfText(data));
+      else if (extension === 'xlsx') ({ text, limited } = await xlsxText(data));
       else text = await docxText(data);
     } else {
       const data = await file.arrayBuffer();

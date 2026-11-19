@@ -33,19 +33,29 @@ test('publishes a checklist, saves offline through reload, finalizes, and export
   await page.getByRole('link', { name: 'New checklist', exact: true }).click();
   await page.getByLabel('Checklist name').fill('Қауіпсіздік чек-листі');
   await page.getByLabel('Section name').fill('Выходы и проходы');
-  await page.getByLabel('Question title').fill('Өрт шығу жолы ашық па?');
-  await page.getByLabel('Question weight').fill('3');
+  await page.getByLabel('What to check').fill('Өрт шығу жолы ашық па?');
+  await page.getByText('Verification and source', { exact: true }).click();
+  await page.getByLabel('How to verify').fill('Осмотреть аварийный выход');
+  await page.getByLabel('Requirement reference').fill('Инструкция № 4');
+  await page.getByRole('button', { name: 'Add check' }).click();
   await page
-    .getByRole('button', { name: 'Publish checklist', exact: true })
+    .getByLabel('What to check')
+    .nth(1)
+    .fill('Схема эвакуации доступна');
+  await page
+    .getByRole('button', { name: 'Save checklist', exact: true })
     .click();
   await expect(page.getByText('Version 1', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'Inspections', exact: true }).click();
-  await page.getByRole('link', { name: 'New inspection', exact: true }).click();
+  await page
+    .getByRole('link', { name: 'Start inspection', exact: true })
+    .click();
   const checklist = page.getByRole('combobox', {
     name: 'Checklist',
     exact: true,
   });
-  await checklist.selectOption({ label: 'Қауіпсіздік чек-листі' });
+  await expect(checklist.locator('option:checked')).toHaveText(
+    'Қауіпсіздік чек-листі',
+  );
   await page.getByLabel('Inspection title').fill('Қойма тексерісі');
   await page.getByLabel('Inspected entity').fill('Склад № 2');
   await page.getByRole('button', { name: 'Start inspection' }).click();
@@ -57,38 +67,65 @@ test('publishes a checklist, saves offline through reload, finalizes, and export
     .getByRole('button', { name: 'Complete inspection', exact: true })
     .click();
   await expect(
-    page.getByText('Answer the required questions before completing.'),
+    page.getByText('Review the remaining checklist items.'),
   ).toBeVisible();
 
   await context.setOffline(true);
   await expect(page.getByLabel('Sync status: Offline')).toBeVisible();
-  await page.getByRole('button', { name: 'Yes', exact: true }).click();
+  const exit = page.getByRole('group', { name: 'Өрт шығу жолы ашық па?' });
+  const map = page.getByRole('group', { name: 'Схема эвакуации доступна' });
+  await exit
+    .getByRole('button', { name: 'Does not conform', exact: true })
+    .click();
+  await map
+    .getByLabel('Other outcome for Схема эвакуации доступна')
+    .selectOption('unverified');
+  await expect(
+    page.getByRole('button', { name: 'Complete inspection', exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole('button', { name: 'Complete inspection', exact: true })
+    .click();
+  await expect(
+    page.getByText('Add an observation or explain the outcome.', {
+      exact: false,
+    }),
+  ).toHaveCount(2);
   await page
     .getByRole('textbox', { name: 'Notes for Өрт шығу жолы ашық па?' })
-    .fill('Қауіпсіздік тексерілді. Выход открыт.');
+    .fill('Возле выхода стоят два ящика.');
+  await page
+    .getByRole('textbox', { name: 'Notes for Схема эвакуации доступна' })
+    .fill('Нет доступа в коридор B.');
   await expect(
     page.getByText('Saved on this device', { exact: true }),
   ).toBeVisible();
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(
-    page.getByRole('button', { name: 'Yes', exact: true }),
+    exit.getByRole('button', { name: 'Does not conform', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
   await expect(
+    map.getByLabel('Other outcome for Схема эвакуации доступна'),
+  ).toHaveValue('unverified');
+  await expect(
     page.getByRole('textbox', { name: 'Notes for Өрт шығу жолы ашық па?' }),
-  ).toHaveValue('Қауіпсіздік тексерілді. Выход открыт.');
+  ).toHaveValue('Возле выхода стоят два ящика.');
   await page
     .getByRole('button', { name: 'Complete inspection', exact: true })
     .click();
   await expect(
-    page.getByRole('button', { name: 'Yes', exact: true }),
+    exit.getByRole('button', { name: 'Does not conform', exact: true }),
   ).toBeDisabled();
   await page.getByRole('link', { name: 'View report', exact: true }).click();
   await expect(
     page.getByRole('heading', { name: 'Inspection report', exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole('cell', { name: 'Қауіпсіздік тексерілді. Выход открыт.' }),
+    page.getByRole('cell', { name: 'Возле выхода стоят два ящика.' }),
   ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Findings and corrective actions' }),
+  ).toHaveCount(0);
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download Excel' }).click();
   const download = await downloadPromise;
@@ -100,12 +137,14 @@ test('publishes a checklist, saves offline through reload, finalizes, and export
     undefined,
     'Выходы и проходы',
     'Өрт шығу жолы ашық па?',
-    'Yes',
-    'Yes',
-    3,
-    100,
-    'Қауіпсіздік тексерілді. Выход открыт.',
+    'Осмотреть аварийный выход',
+    'Инструкция № 4',
+    'Does not conform',
+    'Возле выхода стоят два ящика.',
   ]);
+  expect(workbook.getWorksheet('Responses')?.getCell('E3').value).toBe(
+    'Not verified',
+  );
   const pdf = info.outputPath('inspection.pdf');
   await page.pdf({ path: pdf, preferCSSPageSize: true, printBackground: true });
   expect((await readFile(pdf)).subarray(0, 4).toString()).toBe('%PDF');
@@ -113,10 +152,7 @@ test('publishes a checklist, saves offline through reload, finalizes, and export
   await expect(page.getByLabel('Sync status: Local workspace')).toBeVisible();
 
   await page.goto(auditUrl);
-  await page
-    .getByRole('article')
-    .getByRole('link', { name: 'Record finding' })
-    .click();
+  await page.getByRole('link', { name: 'Record finding' }).click();
   await page
     .getByRole('textbox', { name: 'Finding title' })
     .fill('Replace faded exit signs');
@@ -159,6 +195,13 @@ test('opens an inspection from the phone navigation and keeps fields within the 
     await expect(
       page.getByRole('heading', { name: 'Overview', exact: true }),
     ).toBeVisible();
+    const accountMenu = page.getByLabel('Account menu');
+    const theme = page.getByRole('combobox', { name: 'Theme', exact: true });
+    await accountMenu.click();
+    await theme.selectOption('dark');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await page.screenshot({
       path: info.outputPath('mobile.png'),
       fullPage: true,
@@ -174,6 +217,16 @@ test('opens an inspection from the phone navigation and keeps fields within the 
       page.getByRole('heading', { name: 'Warehouse safety inspection' }),
     ).toBeVisible();
     await expect(page.getByRole('progressbar')).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Conforms', exact: true }).first(),
+    ).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath('mobile-inspection.png'),
+      fullPage: true,
+    });
+    await accountMenu.click();
+    await theme.selectOption('light');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -192,7 +245,7 @@ for (const sample of [
     overview: 'Обзор',
     checklists: 'Чек-листы',
     newChecklist: 'Новый чек-лист',
-    publish: 'Опубликовать чек-лист',
+    publish: 'Сохранить чек-лист',
     validation: 'Укажите название чек-листа.',
     reports: 'Отчёты',
     example: 'Проверка производственного оборудования',
@@ -209,7 +262,7 @@ for (const sample of [
     overview: 'Шолу',
     checklists: 'Тексеру тізімдері',
     newChecklist: 'Жаңа тексеру тізімі',
-    publish: 'Тізімді жариялау',
+    publish: 'Тізімді сақтау',
     validation: 'Тексеру тізіміне атау беріңіз.',
     reports: 'Есептер',
     example: 'Өндірістік жабдықты тексеру',

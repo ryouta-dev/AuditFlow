@@ -19,14 +19,18 @@ import {
 } from 'lucide-react';
 import {
   answerIndex,
+  completionIssues,
+  conformityOptions,
   formatDate,
   hasFinalReport,
   inspectionStatuses,
   localDate,
+  needsEvidence,
   rowsOf,
   scoreFor,
   statusLabel,
   summarize,
+  summarizeConformity,
   type Data,
   type Question,
   type Row,
@@ -132,10 +136,14 @@ export function Audits() {
   );
 }
 
-export function NewAudit() {
+export function NewAudit({
+  initialTemplateId = '',
+}: {
+  initialTemplateId?: string;
+}) {
   const { t } = useLanguage();
   const { rows, repo } = useWorkspace();
-  const [templateId, setTemplateId] = useState('');
+  const [templateId, setTemplateId] = useState(initialTemplateId);
   const [versionId, setVersionId] = useState('');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
@@ -163,7 +171,7 @@ export function NewAudit() {
         id,
         data: {
           snapshotId: version.id,
-          title: value('title'),
+          title: value('title') || version.data.name,
           entity: value('entity'),
           location: value('location'),
           date: value('date'),
@@ -184,18 +192,16 @@ export function NewAudit() {
     <>
       <PageTitle
         title={t('New inspection')}
-        description={t(
-          'Choose a checklist version and record what you’ll inspect.',
-        )}
+        description={t('Choose a checklist and record what you’ll inspect.')}
         back={{ href: '/audits', label: t('Inspections') }}
       />
       {error && <Alert>{error}</Alert>}
       {!templates.length ? (
         <section className="panel">
           <Empty
-            title={t('Publish a checklist first')}
+            title={t('Save a checklist first')}
             detail={t(
-              'A published checklist gives the inspection a fixed set of questions and scoring rules.',
+              'Add at least one criterion and save the checklist to use it in an inspection.',
             )}
             action={
               <Link className="button primary" href="/templates/new">
@@ -225,28 +231,31 @@ export function NewAudit() {
                   ))}
                 </select>
               </label>
-              <label>
-                {t('Version')}
-                <select
-                  required
-                  value={version?.id ?? ''}
-                  onChange={(event) => setVersionId(event.target.value)}
-                >
-                  {versions.map((item) => (
-                    <option value={item.id} key={item.id}>
-                      {t('Version {number}', { number: item.data.number })}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {(versions.length > 1 ||
+                version?.data.assessment !== 'conformity') && (
+                <label>
+                  {t('Version')}
+                  <select
+                    required
+                    value={version?.id ?? ''}
+                    onChange={(event) => setVersionId(event.target.value)}
+                  >
+                    {versions.map((item) => (
+                      <option value={item.id} key={item.id}>
+                        {t('Version {number}', { number: item.data.number })}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             <label>
-              {t('Inspection title')}
+              {t('Inspection title')}{' '}
+              <span className="optional">{t('Optional')}</span>
               <input
                 name="title"
                 maxLength={160}
-                placeholder={t('e.g. Warehouse safety inspection')}
-                required
+                placeholder={version?.data.name}
               />
             </label>
             <label>
@@ -300,7 +309,7 @@ export function NewAudit() {
             <p className="muted">
               {version?.data.description ||
                 t(
-                  'The inspection will keep these questions and scoring rules.',
+                  'The inspection keeps a copy of the checklist as it was when you started.',
                 )}
             </p>
             {version && (
@@ -329,6 +338,7 @@ function QuestionResponse({
   save,
   auditId,
   index,
+  conformity,
 }: {
   item: Question;
   answer?: Row<'answer'>;
@@ -336,6 +346,7 @@ function QuestionResponse({
   save: (patch: Patch) => Promise<void>;
   auditId: string;
   index: number;
+  conformity: boolean;
 }) {
   const { locale, t } = useLanguage();
   const [previous, setPrevious] = useState(answer);
@@ -378,16 +389,27 @@ function QuestionResponse({
         <div>
           <h3 id={`label-${item.id}`}>
             {item.title}
-            {item.required && (
+            {!conformity && item.required && (
               <span className="required-mark" aria-label={t('Required')}>
                 {' '}
                 *
               </span>
             )}
           </h3>
-          {item.description && <p>{item.description}</p>}
+          {item.description && (
+            <p>
+              {conformity && <strong>{t('How to verify')} · </strong>}
+              {item.description}
+            </p>
+          )}
+          {conformity && item.source && (
+            <p>
+              <strong>{t('Requirement reference')} · </strong>
+              {item.source}
+            </p>
+          )}
         </div>
-        {score !== null && (
+        {!conformity && score !== null && (
           <span className="question-score">
             {formatPercent(Math.round(score * 100), locale)}
           </span>
@@ -401,23 +423,50 @@ function QuestionResponse({
         >
           <legend className="sr-only">{item.title}</legend>
           {item.type === 'boolean' && (
-            <div className="segmented-response">
-              {[
-                ['yes', t('Yes')],
-                ['no', t('No')],
-                ['na', t('N/A')],
-              ].map(([option, label]) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={`choice choice-${option}`}
-                  aria-pressed={value === option}
-                  onClick={() => editValue(value === option ? null : option)}
-                >
-                  {value === option && <Check size={15} />} {label}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="segmented-response">
+                {(conformity
+                  ? conformityOptions
+                      .slice(0, 2)
+                      .map((option) => [option.value, t(option.label)])
+                  : [
+                      ['yes', t('Yes')],
+                      ['no', t('No')],
+                      ['na', t('N/A')],
+                    ]
+                ).map(([option, label]) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={`choice choice-${option}`}
+                    aria-pressed={value === option}
+                    onClick={() => editValue(value === option ? null : option)}
+                  >
+                    {value === option && <Check size={15} />} {label}
+                  </button>
+                ))}
+              </div>
+              {conformity &&
+                (!readOnly || value === 'na' || value === 'unverified') && (
+                  <select
+                    className="exception-select"
+                    aria-label={t('Other outcome for {name}', {
+                      name: item.title,
+                    })}
+                    value={
+                      value === 'na' || value === 'unverified' ? value : ''
+                    }
+                    onChange={(event) => editValue(event.target.value || null)}
+                  >
+                    <option value="">{t('Other outcome')}</option>
+                    {conformityOptions.slice(2).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.label)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+            </>
           )}
           {item.type === 'rating' && (
             <div className="segmented-response">
@@ -508,7 +557,15 @@ function QuestionResponse({
           )}
         </fieldset>
         <label className="answer-note">
-          {t('Response notes')}
+          {conformity
+            ? t(needsEvidence(value) ? 'Observation or reason' : 'Observation')
+            : t('Response notes')}
+          {conformity && needsEvidence(value) && (
+            <span className="required-mark" aria-label={t('Required')}>
+              {' '}
+              *
+            </span>
+          )}
           <textarea
             aria-label={t('Notes for {name}', { name: item.title })}
             rows={2}
@@ -519,14 +576,34 @@ function QuestionResponse({
             onChange={(event) => edit({ notes: event.target.value }, 'notes')}
           />
         </label>
-        <Link
-          className="text-link finding-link"
-          href={`/findings/new/${auditId}/${item.id}`}
-        >
-          <Flag size={14} /> {t('Record finding')}
-        </Link>
+        {!conformity && (
+          <Link
+            className="text-link finding-link"
+            href={`/findings/new/${auditId}/${item.id}`}
+          >
+            <Flag size={14} /> {t('Record finding')}
+          </Link>
+        )}
       </div>
     </article>
+  );
+}
+
+export function ConformityCounts({
+  counts,
+}: {
+  counts: ReturnType<typeof summarizeConformity>;
+}) {
+  const { t } = useLanguage();
+  return (
+    <dl className="conformity-counts" aria-label={t('Outcome summary')}>
+      {conformityOptions.map(({ value, label }) => (
+        <div key={value} className={`outcome-${value}`}>
+          <dt>{t(label)}</dt>
+          <dd>{counts[value]}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -546,6 +623,8 @@ export function AuditDetail({
   const chain = useRef(Promise.resolve());
   const answers = answerIndex(rowsOf(rows, 'answer'), row.id);
   const summary = summarize(snapshot.data, answers);
+  const conformity = snapshot.data.assessment === 'conformity';
+  const issues = review ? completionIssues(snapshot.data, answers) : [];
   const readOnly =
     row.data.status === 'completed' || row.data.status === 'archived';
   const completionPending =
@@ -645,17 +724,32 @@ export function AuditDetail({
         }
       />
       {error && <Alert>{error}</Alert>}
-      {review && summary.missing.length > 0 && (
+      {issues.length > 0 && (
         <Alert>
           <strong>
-            {t('Answer the required questions before completing.')}
+            {t(
+              conformity
+                ? 'Review the remaining checklist items.'
+                : 'Answer the required questions before completing.',
+            )}
           </strong>
           <ul className="missing-list">
-            {summary.missing.map((item) => (
+            {issues.map(({ item, reason }) => (
               <li key={item.id}>
                 <a className="text-link" href={`#question-${item.id}`}>
                   {item.title}
                 </a>
+                {conformity && (
+                  <>
+                    {' '}
+                    ·{' '}
+                    {t(
+                      reason === 'decision'
+                        ? 'Select an outcome.'
+                        : 'Add an observation or explain the outcome.',
+                    )}
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -698,6 +792,7 @@ export function AuditDetail({
                   readOnly={readOnly || working}
                   save={(patch) => save(question.id, patch)}
                   index={j + 1}
+                  conformity={conformity}
                 />
               ))}
             </section>
@@ -730,12 +825,14 @@ export function AuditDetail({
               max={summary.total || 1}
               aria-label={t('Inspection progress')}
             />
-            <p className="small-copy muted">
-              {t('{answered} of {required} required answered', {
-                answered: summary.requiredAnswered,
-                required: summary.required,
-              })}
-            </p>
+            {!conformity && (
+              <p className="small-copy muted">
+                {t('{answered} of {required} required answered', {
+                  answered: summary.requiredAnswered,
+                  required: summary.required,
+                })}
+              </p>
+            )}
             <nav className="section-nav" aria-label={t('Inspection sections')}>
               {snapshot.data.sections.map((section) => (
                 <a key={section.id} href={`#section-${section.id}`}>
@@ -743,15 +840,21 @@ export function AuditDetail({
                 </a>
               ))}
             </nav>
-            <div className="compliance-summary">
-              <span>{t('Compliance score')}</span>
-              <strong>
-                {summary.score === null
-                  ? t('N/A')
-                  : formatPercent(summary.score, locale)}
-              </strong>
-            </div>
-            {summary.incompleteScored > 0 && (
+            {conformity ? (
+              <ConformityCounts
+                counts={summarizeConformity(snapshot.data, answers)}
+              />
+            ) : (
+              <div className="compliance-summary">
+                <span>{t('Compliance score')}</span>
+                <strong>
+                  {summary.score === null
+                    ? t('N/A')
+                    : formatPercent(summary.score, locale)}
+                </strong>
+              </div>
+            )}
+            {!conformity && summary.incompleteScored > 0 && (
               <p className="small-copy muted">
                 {t('Unanswered scored questions excluded: {count}', {
                   count: summary.incompleteScored,

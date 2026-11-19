@@ -49,6 +49,7 @@ import { useWorkspace } from '@/features/workspace/context';
 import { Alert, go, PageTitle } from '@/features/workspace/ui';
 import { useAiSession, type AiMode } from './session';
 import { assignmentFormats, readAssignment } from './assignment';
+import { pagesPath } from '@/lib/hosting';
 
 const tools = {
   checklist: 'Draft a checklist',
@@ -67,8 +68,10 @@ const errors: Partial<Record<string, Message>> = {
   provider_auth: 'The provider rejected the API key or model access.',
   provider_limit: 'Check your provider credits and usage limits.',
   provider_unavailable: 'The provider is unavailable or rejected the request.',
+  response_truncated:
+    'The model stopped before finishing. Ask for fewer checklist items or send a smaller section of the source.',
   invalid_proposal:
-    'The provider returned an incomplete or invalid proposal. Try a shorter request.',
+    'The provider returned data in an unexpected format. Try again or choose another model.',
   timeout: 'The AI request timed out. Try again.',
   rate_limit: 'Wait for the current request or try again in a minute.',
 };
@@ -98,13 +101,18 @@ function contextFor(
   const lines = [
     `${t('Checklist')}: ${snapshot.data.name}`,
     `${t('Status')}: ${statusLabel(t, audit.data.status)}`,
-    `${t('Compliance score')}: ${summary.score === null ? t('N/A') : formatPercent(summary.score, locale)}`,
+    snapshot.data.assessment === 'conformity'
+      ? t('Items reviewed: {count}/{total}', {
+          count: summary.count,
+          total: summary.total,
+        })
+      : `${t('Compliance score')}: ${summary.score === null ? t('N/A') : formatPercent(summary.score, locale)}`,
     '',
     ...snapshot.data.sections.flatMap((section) => [
       section.title,
       ...section.questions.map(
         (question) =>
-          `• ${question.title} — ${responseLabel(question, answers[question.id]?.data.value, t)}`,
+          `• ${question.title} — ${responseLabel(question, answers[question.id]?.data.value, t, snapshot.data.assessment === 'conformity')}`,
       ),
       '',
     ]),
@@ -250,10 +258,12 @@ function DirectConnection({ disabled }: { disabled: boolean }) {
   const [model, setModel] = useState(config?.model ?? '');
   const [invalid, setInvalid] = useState(false);
   const form = useRef<HTMLFormElement>(null);
+  const river = directEndpoint(endpoint)?.href === riverEndpoint;
+  const riverUnavailable = Boolean(pagesPath && river);
 
   function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled) return;
+    if (disabled || riverUnavailable) return;
     const data = new FormData(event.currentTarget);
     const next = directCredentialsSchema.safeParse({
       endpoint,
@@ -277,9 +287,11 @@ function DirectConnection({ disabled }: { disabled: boolean }) {
       </div>
       <p className="muted small-copy">
         {t(
-          directEndpoint(endpoint)?.href === riverEndpoint
-            ? 'River requests go through the local AuditFlow server.'
-            : 'The browser sends requests directly to the API address you enter.',
+          riverUnavailable
+            ? 'River is available in the local demo at localhost.'
+            : river
+              ? 'River requests go through the local AuditFlow server.'
+              : 'The browser sends requests directly to the API address you enter.',
         )}
       </p>
       <fieldset className="ai-fields stack" disabled={disabled}>
@@ -318,7 +330,7 @@ function DirectConnection({ disabled }: { disabled: boolean }) {
             />
           </label>
         </details>
-        <button className="button primary">
+        <button className="button primary" disabled={riverUnavailable}>
           {t('Use key for this session')}
         </button>
       </fieldset>
@@ -402,13 +414,18 @@ function Proposal({
                   name,
                   description,
                   status: 'draft',
+                  assessment: 'conformity',
                   sections: sections.map((section) => ({
                     title: section.title,
                     id: crypto.randomUUID(),
-                    questions: section.questions.map((question) => ({
-                      ...blankQuestion(),
-                      ...question,
-                    })),
+                    questions: section.questions.map(
+                      ({ title, description, source }) => ({
+                        ...blankQuestion(),
+                        title,
+                        description,
+                        source,
+                      }),
+                    ),
                   })),
                 },
               });
@@ -523,14 +540,15 @@ function RequestForm({
   audit?: Row<'audit'>;
   finding?: Row<'finding'>;
   disabled: boolean;
-  config: AiConnection;
+  config: AiConnection | null;
 }) {
   const { t, locale, identity } = useWorkspace();
   const [prompt, setPrompt] = useState('');
   const [context, setContext] = useState(() =>
     startingContext.slice(0, maxContext),
   );
-  const [approved, setApproved] = useState(false);
+  const [approval, setApproved] = useState<AiConnection | null>(null);
+  const approved = config !== null && approval === config;
   const [error, setError] = useState<Message>();
   const [working, setWorking] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -541,38 +559,58 @@ function RequestForm({
   const [result, setResult] = useState<AiResult>();
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
-  const direct = 'endpoint' in config;
+  const direct = config && 'endpoint' in config;
   const river = direct && config.endpoint === riverEndpoint;
   const provider = direct
     ? new URL(config.endpoint).host
-    : providerNames[config.provider];
+    : config
+      ? providerNames[config.provider]
+      : '';
   const requirePrompt =
     task === 'inspection' ||
     (task === 'checklist' && context.trim().length < 3);
 
   async function importFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
+    const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = '';
-    if (!file) return;
+    if (!files.length) return;
+    if (files.length > 3) {
+      setError('Choose up to three files at a time.');
+      return;
+    }
     setImporting(true);
-    setApproved(false);
+    setApproved(null);
     setError(undefined);
     try {
-      const imported = await readAssignment(file);
-      if (imported.error) {
-        const messages = {
-          unsupported: 'Choose a TXT, Markdown, PDF, or DOCX file.',
-          too_large: 'The file is larger than 8 MB.',
-          empty:
-            'No readable text was found. Paste the assignment text or use a text-based file.',
-          unreadable:
-            'Could not read the file. Try another format or paste the text.',
-        } as const;
-        setError(messages[imported.error]);
-        return;
+      const extracted: string[] = [];
+      let limited = false;
+      for (const file of files) {
+        const imported = await readAssignment(file);
+        if (imported.error) {
+          const messages = {
+            unsupported: 'Choose a TXT, Markdown, PDF, DOCX, or XLSX file.',
+            too_large: 'The file is larger than 8 MB.',
+            empty:
+              'No readable text was found. Paste the assignment text or use a text-based file.',
+            unreadable:
+              'Could not read the file. Try another format or paste the text.',
+          } as const;
+          setError(messages[imported.error]);
+          return;
+        }
+        extracted.push(
+          files.length === 1
+            ? imported.text
+            : `[${file.name}]\n${imported.text}`,
+        );
+        limited ||= imported.limited;
       }
-      setContext(imported.text);
-      setFilePreview({ name: file.name, limited: imported.limited });
+      const text = extracted.join('\n\n');
+      setContext(text.slice(0, maxContext));
+      setFilePreview({
+        name: files.map((file) => file.name).join(', '),
+        limited: limited || text.length > maxContext,
+      });
     } finally {
       setImporting(false);
     }
@@ -580,7 +618,8 @@ function RequestForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (disabled || importing || !approved || controller.current) return;
+    if (disabled || importing || !config || !approved || controller.current)
+      return;
     const fields = {
       config,
       task,
@@ -593,7 +632,7 @@ function RequestForm({
     setWorking(true);
     setError(undefined);
     setResult(undefined);
-    setApproved(false);
+    setApproved(null);
     try {
       if (direct && !river) {
         const input = directAiRequestSchema.safeParse(fields);
@@ -665,7 +704,7 @@ function RequestForm({
       if (parsed.success && parsed.data.task === task) setResult(parsed.data);
       else
         setError(
-          'The provider returned an incomplete or invalid proposal. Try a shorter request.',
+          'The provider returned data in an unexpected format. Try again or choose another model.',
         );
     } catch {
       if (!operation.signal.aborted)
@@ -684,10 +723,7 @@ function RequestForm({
     <>
       <form onSubmit={submit} className="panel form-panel stack">
         <h2>{t(tools[task])}</h2>
-        <fieldset
-          className="ai-fields stack"
-          disabled={disabled || working || importing}
-        >
+        <fieldset className="ai-fields stack" disabled={working || importing}>
           {task === 'checklist' && (
             <>
               <label>
@@ -695,12 +731,13 @@ function RequestForm({
                 <input
                   type="file"
                   accept={assignmentFormats}
+                  multiple
                   onChange={(event) => void importFile(event)}
                 />
               </label>
               <p className="muted small-copy">
                 {t(
-                  'TXT, Markdown, PDF with selectable text, or DOCX · up to 8 MB. Only the reviewed text is sent.',
+                  'TXT, Markdown, searchable PDF, DOCX, or XLSX · up to 8 MB. Only the reviewed text is sent.',
                 )}
               </p>
               {filePreview && (
@@ -726,7 +763,7 @@ function RequestForm({
                   )}
                   onChange={(event) => {
                     setContext(event.target.value);
-                    setApproved(false);
+                    setApproved(null);
                   }}
                 />
               </label>
@@ -753,7 +790,7 @@ function RequestForm({
               }
               onChange={(event) => {
                 setPrompt(event.target.value);
-                setApproved(false);
+                setApproved(null);
               }}
             />
           </label>
@@ -780,7 +817,7 @@ function RequestForm({
                   required
                   onChange={(event) => {
                     setContext(event.target.value);
-                    setApproved(false);
+                    setApproved(null);
                   }}
                 />
               </label>
@@ -789,32 +826,51 @@ function RequestForm({
           <p className="muted small-copy">
             {t('Review the text and remove private details before sending.')}
           </p>
-          {(direct
-            ? new URL(config.endpoint).hostname === 'openrouter.ai'
-            : config.provider === 'openrouter') && (
+          {config &&
+            (direct
+              ? new URL(config.endpoint).hostname === 'openrouter.ai'
+              : config.provider === 'openrouter') && (
+              <p className="muted small-copy">
+                {t(
+                  'OpenRouter passes the reviewed text to the model provider.',
+                )}
+              </p>
+            )}
+          {config ? (
+            <>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={approved}
+                  onChange={(event) =>
+                    setApproved(event.target.checked ? config : null)
+                  }
+                />
+                {t('I reviewed the text and agree to send it to {provider}.', {
+                  provider,
+                })}
+              </label>
+              <button
+                className="button primary self-start"
+                disabled={!approved || disabled}
+              >
+                <Sparkles size={16} />
+                {t(
+                  working ? 'Waiting for the provider…' : 'Send to {provider}',
+                  {
+                    provider,
+                  },
+                )}
+              </button>
+              <p className="muted small-copy">
+                {t('Requests use your provider account and may incur charges.')}
+              </p>
+            </>
+          ) : (
             <p className="muted small-copy">
-              {t('OpenRouter passes the reviewed text to the model provider.')}
+              {t('Connect a model to generate the checklist.')}
             </p>
           )}
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={approved}
-              onChange={(event) => setApproved(event.target.checked)}
-            />
-            {t('I reviewed the text and agree to send it to {provider}.', {
-              provider,
-            })}
-          </label>
-          <button className="button primary self-start" disabled={!approved}>
-            <Sparkles size={16} />
-            {t(working ? 'Waiting for the provider…' : 'Send to {provider}', {
-              provider,
-            })}
-          </button>
-          <p className="muted small-copy">
-            {t('Requests use your provider account and may incur charges.')}
-          </p>
         </fieldset>
         {importing && (
           <p className="muted" role="status">
@@ -828,7 +884,13 @@ function RequestForm({
   );
 }
 
-export function AiStudio({ findingTarget }: { findingTarget?: string }) {
+export function AiStudio({
+  findingTarget,
+  checklistOnly = false,
+}: {
+  findingTarget?: string;
+  checklistOnly?: boolean;
+}) {
   const { rows, demo, online, t, locale } = useWorkspace();
   const { mode, setMode, config } = useAiSession();
   const initialFinding = rowsOf(rows, 'finding').find(
@@ -855,6 +917,39 @@ export function AiStudio({ findingTarget }: { findingTarget?: string }) {
       : null;
   const needsAudit = task !== 'checklist';
   const startingContext = contextFor(rows, task, audit, finding, t, locale);
+  const connection = demo ? (
+    <DirectConnection disabled={Boolean(blocked)} />
+  ) : (
+    <Connection disabled={Boolean(blocked)} />
+  );
+  if (checklistOnly)
+    return (
+      <>
+        <PageTitle
+          title={t('Generate checklist with AI')}
+          description={t(
+            'Describe what you need to check or add source material. You can edit the generated checklist before saving it.',
+          )}
+          back={{ href: '/templates/new', label: t('New checklist') }}
+        />
+        {blocked && (
+          <div className="notice" role="status">
+            <ShieldCheck size={18} /> {t(blocked)}
+          </div>
+        )}
+        <div className="ai-layout checklist-ai-layout">
+          <div className="stack">
+            <RequestForm
+              task="checklist"
+              startingContext=""
+              config={config}
+              disabled={Boolean(blocked)}
+            />
+          </div>
+          <aside className="stack">{connection}</aside>
+        </div>
+      </>
+    );
 
   return (
     <>
@@ -897,12 +992,7 @@ export function AiStudio({ findingTarget }: { findingTarget?: string }) {
               </p>
             )}
           </section>
-          {mode !== 'manual' &&
-            (demo ? (
-              <DirectConnection disabled={Boolean(blocked)} />
-            ) : (
-              <Connection disabled={Boolean(blocked)} />
-            ))}
+          {mode !== 'manual' && connection}
         </aside>
         <div className="stack">
           {mode === 'manual' ? (

@@ -19,9 +19,11 @@ import {
 import {
   answerIndex,
   formatDate,
+  hasFinalReport,
   localDate,
   rowsOf,
   summarize,
+  summarizeConformity,
   type Row,
 } from '@/lib/domain';
 import { formatPercent, type Locale } from '@/lib/i18n';
@@ -48,12 +50,21 @@ export function inspectionData(rows: Row[]) {
       const version = snapshots.find(
         (record) => record.id === row.data.snapshotId,
       );
+      const inspectionAnswers = answerIndex(answers, row.id);
+      const summary = version
+        ? summarize(version.data, inspectionAnswers)
+        : null;
+      const outcomes =
+        version?.data.assessment === 'conformity'
+          ? summarizeConformity(version.data, inspectionAnswers)
+          : undefined;
       return {
         row,
         version,
-        score: version
-          ? summarize(version.data, answerIndex(answers, row.id)).score
-          : null,
+        score: outcomes ? null : (summary?.score ?? null),
+        outcomes,
+        reviewed: summary?.count ?? 0,
+        total: summary?.total ?? 0,
       };
     });
 }
@@ -104,14 +115,14 @@ export function InspectionTable({
             <th scope="col">{t('Inspection')}</th>
             <th scope="col">{t('Status')}</th>
             <th scope="col">{t('Date')}</th>
-            <th scope="col">{t('Score')}</th>
+            <th scope="col">{t('Result')}</th>
             <th scope="col">
               <span className="sr-only">{t('Open record')}</span>
             </th>
           </tr>
         </thead>
         <tbody>
-          {items.map(({ row, version, score }) => (
+          {items.map(({ row, version, score, outcomes, reviewed, total }) => (
             <tr key={row.id}>
               <td>
                 <Link className="table-record" href={`/audits/${row.id}`}>
@@ -138,7 +149,16 @@ export function InspectionTable({
               <td className="nowrap">{formatDate(row.data.date, locale)}</td>
               <td>
                 <span className={score !== null ? 'score-cell' : 'muted'}>
-                  {score === null ? '—' : formatPercent(score, locale)}
+                  {outcomes
+                    ? hasFinalReport(row.data)
+                      ? t('Nonconformities: {count}', { count: outcomes.no })
+                      : t('Items reviewed: {count}/{total}', {
+                          count: reviewed,
+                          total,
+                        })
+                    : score === null
+                      ? '—'
+                      : formatPercent(score, locale)}
                 </span>
               </td>
               <td>
@@ -405,7 +425,89 @@ function StatusChart({ items }: { items: Inspection[] }) {
 }
 
 export function Dashboard({ analytics = false }: { analytics?: boolean }) {
-  const { rows, identity, locale, t } = useWorkspace();
+  return analytics ? <Analytics /> : <Overview />;
+}
+
+function Overview() {
+  const { rows, t } = useWorkspace();
+  const items = inspectionData(rows);
+  const resumable = items.find(
+    ({ row }) =>
+      row.data.status === 'in_progress' || row.data.status === 'draft',
+  );
+  const hasChecklist = rowsOf(rows, 'template').some(
+    ({ data }) => data.status === 'published',
+  );
+  return (
+    <>
+      <PageTitle
+        title={t('Overview')}
+        description={t(
+          'Create checklists, run inspections, and review the results.',
+        )}
+      />
+      <section className="overview-actions">
+        <div className="panel form-panel stack overview-action">
+          <span className="tile-icon">
+            <Layers3 size={21} />
+          </span>
+          <h2>{t('Checklists')}</h2>
+          <div className="heading-actions">
+            <Link
+              className={`button ${hasChecklist ? 'secondary' : 'primary'}`}
+              href="/templates/new"
+            >
+              <Plus size={17} /> {t('New checklist')}
+            </Link>
+            <Link className="button secondary" href="/templates/new/ai">
+              {t('Generate with AI')}
+            </Link>
+          </div>
+        </div>
+        {(hasChecklist || resumable) && (
+          <div className="panel form-panel stack overview-action">
+            <span className="tile-icon">
+              <ClipboardCheck size={21} />
+            </span>
+            <h2>{t('Inspections')}</h2>
+            <div className="heading-actions">
+              {resumable && (
+                <Link
+                  className="button primary"
+                  href={`/audits/${resumable.row.id}`}
+                >
+                  {t('Continue inspection')} <ArrowRight size={16} />
+                </Link>
+              )}
+              {hasChecklist && (
+                <Link
+                  className={`button ${resumable ? 'secondary' : 'primary'}`}
+                  href="/audits/new"
+                >
+                  <Plus size={17} /> {t('New inspection')}
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+      {items.length > 0 && (
+        <section className="panel recent">
+          <div className="panel-heading">
+            <h2>{t('Recent inspections')}</h2>
+            <Link className="button secondary" href="/audits">
+              {t('View all')} <ArrowRight size={16} />
+            </Link>
+          </div>
+          <InspectionTable items={items.slice(0, 5)} compact />
+        </section>
+      )}
+    </>
+  );
+}
+
+function Analytics() {
+  const { rows, locale, t } = useWorkspace();
   const [months, setMonths] = useState(6);
   const [snapshotId, setSnapshotId] = useState('');
   const [status, setStatus] = useState('');
@@ -438,7 +540,7 @@ export function Dashboard({ analytics = false }: { analytics?: boolean }) {
   const actions = rowsOf(rows, 'capa').filter(
     (row) =>
       !['closed', 'verified'].includes(row.data.status) &&
-      (!analytics || relevantFindings.has(row.data.findingId)),
+      relevantFindings.has(row.data.findingId),
   );
   const overdue = actions.filter(
     (row) => row.data.dueDate && row.data.dueDate < today,
@@ -450,15 +552,10 @@ export function Dashboard({ analytics = false }: { analytics?: boolean }) {
   return (
     <>
       <PageTitle
-        title={analytics ? t('Analytics') : t('Overview')}
-        description={
-          analytics
-            ? t('Track performance and review results by checklist version.')
-            : t(
-                'Welcome back, {name}. Here’s what’s happening with your inspections.',
-                { name: identity.name.split(/\s+/)[0] },
-              )
-        }
+        title={t('Analytics')}
+        description={t(
+          'Track performance and review results by checklist version.',
+        )}
         action={
           <>
             <span className="select-control date-filter">
@@ -474,98 +571,47 @@ export function Dashboard({ analytics = false }: { analytics?: boolean }) {
               </select>
               <ChevronDown size={14} />
             </span>
-            {!analytics && (
-              <Link className="button primary" href="/audits/new">
-                <Plus size={18} /> {t('New inspection')}
-              </Link>
-            )}
           </>
         }
       />
-      {!analytics && (
-        <section className="dashboard-hero">
-          <div className="hero-content">
-            <h2>{t('Stay ready for every inspection.')}</h2>
-            <p>
-              {t(
-                'Build a checklist, document your results, and keep follow-up work moving.',
-              )}
-            </p>
-            <Link className="button hero-button" href="/templates">
-              <Layers3 size={16} /> {t('Browse checklists')}{' '}
-              <ArrowRight size={15} />
-            </Link>
-          </div>
-          <div className="hero-art" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-            <i />
-            <span className="hero-spark spark-a" />
-            <span className="hero-spark spark-b" />
-            <span className="hero-spark spark-c" />
-            <div className="art-card art-card-back" />
-            <div className="art-card art-card-front">
-              <div className="art-clip" />
-              <div>
-                <b />
-                <em />
-              </div>
-              <div>
-                <b />
-                <em />
-              </div>
-              <div>
-                <b />
-                <em />
-              </div>
-            </div>
-            <span className="art-check">
-              <ClipboardCheck size={23} />
-            </span>
-          </div>
-        </section>
-      )}
-      {analytics && (
-        <div className="filter-panel panel">
-          <label>
-            {t('Checklist version')}
-            <select
-              value={snapshotId}
-              onChange={(event) => setSnapshotId(event.target.value)}
-            >
-              <option value="">{t('All checklist versions')}</option>
-              {snapshots.map((snapshot) => (
-                <option value={snapshot.id} key={snapshot.id}>
-                  {snapshot.data.name} ·{' '}
-                  {t('Version {number}', { number: snapshot.data.number })}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t('Inspection status')}
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
-              <option value="">{t('All statuses')}</option>
-              {states.map((state) => (
-                <option key={state.key} value={state.key}>
-                  {t(state.label)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!snapshotId && (
-            <p>
-              {t(
-                'Scores can use different criteria. Select a version to compare like-for-like inspections.',
-              )}
-            </p>
-          )}
-        </div>
-      )}
+      <div className="filter-panel panel">
+        <label>
+          {t('Checklist version')}
+          <select
+            value={snapshotId}
+            onChange={(event) => setSnapshotId(event.target.value)}
+          >
+            <option value="">{t('All checklist versions')}</option>
+            {snapshots.map((snapshot) => (
+              <option value={snapshot.id} key={snapshot.id}>
+                {snapshot.data.name} ·{' '}
+                {t('Version {number}', { number: snapshot.data.number })}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t('Inspection status')}
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+          >
+            <option value="">{t('All statuses')}</option>
+            {states.map((state) => (
+              <option key={state.key} value={state.key}>
+                {t(state.label)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!snapshotId && (
+          <p>
+            {t(
+              'Scores can use different criteria. Select a version to compare like-for-like inspections.',
+            )}
+          </p>
+        )}
+      </div>
       <div className="metrics-grid">
         <Metric
           icon={ClipboardList}
@@ -611,33 +657,18 @@ export function Dashboard({ analytics = false }: { analytics?: boolean }) {
         />
         <StatusChart items={items} />
       </div>
-      {!analytics ? (
-        <section className="panel recent">
-          <div className="panel-heading">
-            <div>
-              <h2>{t('Recent inspections')}</h2>
-              <p>{t('Pick up where you left off or review completed work.')}</p>
-            </div>
-            <Link className="button secondary" href="/audits">
-              {t('View all')} <ArrowRight size={16} />
-            </Link>
+      <section className="panel recent">
+        <div className="panel-heading">
+          <div>
+            <h2>{t('Inspections in this period')}</h2>
+            <p>
+              <Activity size={14} />{' '}
+              {t('Matching inspections: {count}', { count: items.length })}
+            </p>
           </div>
-          <InspectionTable items={all.slice(0, 5)} compact />
-        </section>
-      ) : (
-        <section className="panel recent">
-          <div className="panel-heading">
-            <div>
-              <h2>{t('Inspections in this period')}</h2>
-              <p>
-                <Activity size={14} />{' '}
-                {t('Matching inspections: {count}', { count: items.length })}
-              </p>
-            </div>
-          </div>
-          <InspectionTable items={items} />
-        </section>
-      )}
+        </div>
+        <InspectionTable items={items} />
+      </section>
     </>
   );
 }

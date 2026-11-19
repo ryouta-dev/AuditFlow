@@ -23,6 +23,7 @@ test('Postgres validates inspectors, ownership, versions, completion, and storag
   for (const migration of [
     '202611190001_auditflow.sql',
     '202611190002_evidence_bucket.sql',
+    '202611200001_conformity_checklists.sql',
   ])
     await db.exec(
       await readFile(
@@ -247,6 +248,73 @@ test('Postgres validates inspectors, ownership, versions, completion, and storag
   };
   await send(alice, uid.audit, 'audit', reopen, 2);
   await send(alice, answerId, 'answer', { ...answer, value: 'na' }, 1);
+  const simpleId = randomUUID();
+  const simpleSnapshotId = randomUUID();
+  const simpleAuditId = randomUUID();
+  const simpleBlueprint = {
+    ...blueprint,
+    assessment: 'conformity',
+    sections: [
+      {
+        ...blueprint.sections[0],
+        questions: [
+          {
+            ...blueprint.sections[0].questions[0],
+            weight: 1,
+            source: 'Safety procedure §4.2',
+          },
+        ],
+      },
+    ],
+  };
+  await assert.rejects(
+    send(alice, simpleId, 'template', {
+      ...blueprint,
+      assessment: 'conformity',
+      status: 'draft',
+    }),
+    /Invalid conformity checklist/,
+  );
+  await send(alice, simpleId, 'template', {
+    ...simpleBlueprint,
+    status: 'draft',
+  });
+  await send(alice, simpleSnapshotId, 'snapshot', {
+    ...simpleBlueprint,
+    templateId: simpleId,
+    number: 1,
+  });
+  await send(alice, simpleAuditId, 'audit', {
+    ...audit,
+    snapshotId: simpleSnapshotId,
+  });
+  const simpleHex = createHash('sha256')
+    .update(`${simpleAuditId}/${uid.question}`)
+    .digest('hex');
+  const simpleAnswerId = `${simpleHex.slice(0, 8)}-${simpleHex.slice(8, 12)}-8${simpleHex.slice(13, 16)}-8${simpleHex.slice(17, 20)}-${simpleHex.slice(20, 32)}`;
+  const unverified = {
+    ...answer,
+    auditId: simpleAuditId,
+    value: 'unverified',
+    notes: ' ',
+  };
+  await send(alice, simpleAnswerId, 'answer', unverified);
+  const simpleCompletion = { ...completed, snapshotId: simpleSnapshotId };
+  await assert.rejects(
+    send(alice, simpleAuditId, 'audit', simpleCompletion, 1),
+    /incomplete conformity results/,
+  );
+  await send(
+    alice,
+    simpleAnswerId,
+    'answer',
+    { ...unverified, notes: 'No access to the storage room.' },
+    1,
+  );
+  assert.equal(
+    (await send(alice, simpleAuditId, 'audit', simpleCompletion, 1)).state,
+    'applied',
+  );
   await send(alice, uid.draft, 'template', { ...blueprint, status: 'draft' });
   assert.equal(
     (

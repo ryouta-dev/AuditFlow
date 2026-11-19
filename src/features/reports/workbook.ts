@@ -1,5 +1,11 @@
 import { Workbook, type Worksheet } from 'exceljs';
-import { formatDate, statusLabel, type Row } from '@/lib/domain';
+import {
+  conformityOptions,
+  formatDate,
+  statusLabel,
+  type Row,
+  type summarizeConformity,
+} from '@/lib/domain';
 import { translate, type Locale } from '@/lib/i18n';
 
 type WorkbookInput = {
@@ -7,11 +13,14 @@ type WorkbookInput = {
   version: Row<'snapshot'>;
   date: string;
   score: number | null;
+  outcomes?: ReturnType<typeof summarizeConformity>;
   answered: number;
   total: number;
   data: {
     section: string;
     question: string;
+    method: string;
+    source: string;
     response: string;
     notes: string;
     required: boolean;
@@ -64,6 +73,7 @@ export async function exportInspection({
   version,
   date,
   score,
+  outcomes,
   answered,
   total,
   data,
@@ -91,7 +101,12 @@ export async function exportInspection({
       [t('Checklist'), version.data.name],
       [t('Version'), version.data.number],
       [t('Status'), statusLabel(t, audit.data.status)],
-      [t('Compliance (%)'), score ?? t('N/A')],
+      ...(outcomes
+        ? conformityOptions.map(({ label, value }) => [
+            t(label),
+            outcomes[value],
+          ])
+        : [[t('Compliance (%)'), score ?? t('N/A')]]),
       [t('Answered'), answered],
       [t('Questions'), total],
       [t('Scope'), version.data.description],
@@ -106,24 +121,44 @@ export async function exportInspection({
   setup(
     workbook.addWorksheet(t('Responses')),
     'InspectionResponses',
-    [
-      { header: t('Section'), width: 25 },
-      { header: t('Question'), width: 52 },
-      { header: t('Response'), width: 42 },
-      { header: t('Required'), width: 12 },
-      { header: t('Weight'), width: 12 },
-      { header: t('Score (%)'), width: 14 },
-      { header: t('Notes'), width: 55 },
-    ],
-    data.map((item) => [
-      item.section,
-      item.question,
-      item.response,
-      item.required ? t('Yes') : t('No'),
-      item.weight,
-      item.score !== null ? Math.round(item.score * 1000) / 10 : null,
-      item.notes,
-    ]),
+    outcomes
+      ? [
+          { header: t('Section'), width: 25 },
+          { header: t('Criterion'), width: 52 },
+          { header: t('How to verify'), width: 45 },
+          { header: t('Requirement reference'), width: 34 },
+          { header: t('Response'), width: 29 },
+          { header: t('Observation'), width: 55 },
+        ]
+      : [
+          { header: t('Section'), width: 25 },
+          { header: t('Question'), width: 52 },
+          { header: t('Response'), width: 42 },
+          { header: t('Required'), width: 12 },
+          { header: t('Weight'), width: 12 },
+          { header: t('Score (%)'), width: 14 },
+          { header: t('Notes'), width: 55 },
+        ],
+    data.map((item) =>
+      outcomes
+        ? [
+            item.section,
+            item.question,
+            item.method,
+            item.source,
+            item.response,
+            item.notes,
+          ]
+        : [
+            item.section,
+            item.question,
+            item.response,
+            item.required ? t('Yes') : t('No'),
+            item.weight,
+            item.score !== null ? Math.round(item.score * 1000) / 10 : null,
+            item.notes,
+          ],
+    ),
   );
   setup(
     workbook.addWorksheet(t('Findings and CAPA')),

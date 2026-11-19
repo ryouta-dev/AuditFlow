@@ -1,6 +1,9 @@
 import type { NextConfig } from 'next';
 
+const pagesPath = process.env.NEXT_PUBLIC_AUDITFLOW_BASE_PATH;
+
 const config: NextConfig = {
+  ...(pagesPath && { assetPrefix: pagesPath, distDir: '.next-pages' }),
   poweredByHeader: false,
   async rewrites() {
     return [

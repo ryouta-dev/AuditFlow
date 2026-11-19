@@ -22,6 +22,7 @@ import { supabase } from '@/lib/supabase';
 import { downloadBlob } from '@/features/reports/reports';
 import { useWorkspace } from './context';
 import { LanguageSelect } from './language';
+import { ThemeSelect } from './theme';
 import { Alert, Link, PageTitle } from './ui';
 
 const kindName = {
@@ -355,11 +356,11 @@ export function Settings({
             )}
           </section>
           <section className="panel form-panel stack">
-            <h2>{t('Language')}</h2>
-            <p className="muted">
-              {t('Choose the language for the interface and reports.')}
-            </p>
-            <LanguageSelect />
+            <h2>{t('Appearance')}</h2>
+            <div className="field-grid">
+              <LanguageSelect />
+              <ThemeSelect />
+            </div>
           </section>
           {!demo && (
             <section className="panel form-panel stack">

@@ -145,6 +145,13 @@ export const directAiRequestSchema = z
 
 const detail = z.string().trim().min(1).max(2000);
 const title = z.string().trim().min(1).max(160);
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .nullish()
+    .transform((value) => value ?? '');
 const suggestedFinding = z
   .object({
     title,
@@ -154,37 +161,28 @@ const suggestedFinding = z
   .strict();
 
 export const proposalSchemas = {
-  checklist: z
-    .object({
-      name: title,
-      description: z.string().trim().max(1500),
-      sections: z
-        .array(
-          z
-            .object({
-              title,
-              questions: z
-                .array(
-                  z
-                    .object({
-                      title,
-                      description: z.string().trim().max(400),
-                      type: z.enum(['boolean', 'text', 'number', 'date']),
-                      required: z.boolean(),
-                      weight: z.number().int().min(1).max(5),
-                      severity: z.enum(severities),
-                    })
-                    .strict(),
-                )
-                .min(1)
-                .max(5),
-            })
-            .strict(),
-        )
-        .min(1)
-        .max(3),
-    })
-    .strict(),
+  checklist: z.object({
+    name: title,
+    description: optionalText(1500),
+    sections: z
+      .array(
+        z.object({
+          title,
+          questions: z
+            .array(
+              z.object({
+                title,
+                description: optionalText(400),
+                source: optionalText(400),
+              }),
+            )
+            .min(1)
+            .max(5),
+        }),
+      )
+      .min(1)
+      .max(3),
+  }),
   inspection: z.object({ text: detail }).strict(),
   capa: z
     .object({ rootCause: detail, corrective: detail, preventive: detail })

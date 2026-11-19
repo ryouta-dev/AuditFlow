@@ -8,6 +8,7 @@ import { useAiSession } from '@/features/ai/session';
 import { useState } from 'react';
 import {
   Archive,
+  ArrowRight,
   ArrowDown,
   ArrowUp,
   ChevronDown,
@@ -49,11 +50,12 @@ const newSection = (): Section => ({
   title: '',
   questions: [blankQuestion()],
 });
-const newDraft = (): Data<'template'> => ({
+const newDraft = (sectionTitle: string): Data<'template'> => ({
   name: '',
   description: '',
   status: 'draft',
-  sections: [newSection()],
+  sections: [{ ...newSection(), title: sectionTitle }],
+  assessment: 'conformity',
 });
 
 function move<T>(list: T[], from: number, to: number) {
@@ -84,12 +86,17 @@ export function Templates() {
       <PageTitle
         title={t('Checklists')}
         description={t(
-          'Build reusable checklists and manage the versions used for inspections.',
+          'Create a checklist by hand or with AI, then reuse it for inspections.',
         )}
         action={
-          <Link className="button primary" href="/templates/new">
-            <Plus size={18} /> {t('New checklist')}
-          </Link>
+          <>
+            <Link className="button secondary" href="/templates/new/ai">
+              {t('Generate with AI')}
+            </Link>
+            <Link className="button primary" href="/templates/new">
+              <Plus size={18} /> {t('New checklist')}
+            </Link>
+          </>
         }
       />
       <div className="list-filter">
@@ -128,19 +135,19 @@ export function Templates() {
               0,
             );
             return (
-              <Link
-                key={item.id}
-                className="template-card panel"
-                href={`/templates/${item.id}/edit`}
-              >
+              <article key={item.id} className="template-card panel">
                 <div className="template-top">
                   <span className="tile-icon">
                     <Layers3 size={22} />
                   </span>
                   <Badge status={item.data.status} />
                 </div>
-                <h2>{item.data.name || t('Untitled checklist')}</h2>
-                <p>{item.data.description || t('No description added.')}</p>
+                <h2 id={`checklist-${item.id}`}>
+                  <Link href={`/templates/${item.id}/edit`}>
+                    {item.data.name || t('Untitled checklist')}
+                  </Link>
+                </h2>
+                {item.data.description && <p>{item.data.description}</p>}
                 <div className="template-meta">
                   <span>
                     {t('Sections: {count}', {
@@ -159,11 +166,21 @@ export function Templates() {
                   )}
                 </div>
                 <div className="template-foot">
-                  {t('Updated {date}', {
-                    date: formatDate(item.updatedAt, locale),
-                  })}
+                  {item.data.status === 'published' && versions.length > 0 ? (
+                    <Link
+                      className="text-link"
+                      href={`/audits/new/${item.id}`}
+                      aria-describedby={`checklist-${item.id}`}
+                    >
+                      {t('Start inspection')} <ArrowRight size={15} />
+                    </Link>
+                  ) : (
+                    t('Updated {date}', {
+                      date: formatDate(item.updatedAt, locale),
+                    })
+                  )}
                 </div>
-              </Link>
+              </article>
             );
           })}
         </div>
@@ -178,7 +195,7 @@ export function Templates() {
                   : t('Create your first checklist')
             }
             detail={t(
-              'Add sections and questions, then publish a version for your inspections.',
+              'Add at least one criterion and save the checklist to use it in an inspection.',
             )}
             action={
               <Link className="button secondary" href="/templates/new">
@@ -234,17 +251,64 @@ function QuestionEditor({
   update,
   actions,
   open,
+  conformity,
 }: {
   question: Question;
   number: number;
   update: (item: Question) => void;
   actions: React.ReactNode;
   open: boolean;
+  conformity: boolean;
 }) {
   const { t } = useLanguage();
   const options = question.options;
   const patch = (values: Partial<Question>) =>
     update({ ...question, ...values });
+  if (conformity) {
+    return (
+      <article className="checklist-item-edit">
+        <div className="checklist-item-main">
+          <span className="question-number">{number}</span>
+          <label>
+            {t('What to check')}
+            <input
+              value={question.title}
+              maxLength={160}
+              placeholder={t('e.g. The emergency exit is unobstructed')}
+              onChange={(event) => patch({ title: event.target.value })}
+            />
+          </label>
+          <div className="edit-item-actions">{actions}</div>
+        </div>
+        <details className="checklist-item-details">
+          <summary>{t('Verification and source')}</summary>
+          <div className="stack">
+            <label>
+              {t('How to verify')}
+              <textarea
+                rows={2}
+                maxLength={4000}
+                value={question.description}
+                placeholder={t(
+                  'e.g. Walk the route and check that the door opens freely',
+                )}
+                onChange={(event) => patch({ description: event.target.value })}
+              />
+            </label>
+            <label>
+              {t('Requirement reference')}
+              <input
+                maxLength={400}
+                value={question.source ?? ''}
+                placeholder={t('e.g. Site procedure, section 4.2')}
+                onChange={(event) => patch({ source: event.target.value })}
+              />
+            </label>
+          </div>
+        </details>
+      </article>
+    );
+  }
   return (
     <details className="question-editor" open={open}>
       <summary>
@@ -438,8 +502,9 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
       ? preparedDraft.value
       : undefined;
   const [draft, setDraft] = useState(
-    () => template?.data ?? suggestion ?? newDraft(),
+    () => template?.data ?? suggestion ?? newDraft(t('Checklist items')),
   );
+  const conformity = draft.assessment === 'conformity';
   const [id] = useState(() => template?.id ?? crypto.randomUUID());
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
@@ -490,12 +555,37 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
             kind: 'template',
             data: { ...draft, status: 'draft' },
           });
-        const { name, description, sections } = draft;
+        const { name, description, sections, assessment } = draft;
+        const blueprint = {
+          name,
+          description,
+          sections,
+          ...(assessment ? { assessment } : {}),
+        };
+        if (
+          assessment === 'conformity' &&
+          draft.status === 'published' &&
+          versions[0] &&
+          JSON.stringify(blueprint) ===
+            JSON.stringify({
+              name: versions[0].data.name,
+              description: versions[0].data.description,
+              sections: versions[0].data.sections,
+              ...(versions[0].data.assessment
+                ? { assessment: versions[0].data.assessment }
+                : {}),
+            })
+        ) {
+          if (JSON.stringify(draft) !== JSON.stringify(template?.data))
+            await repo.write({ id, kind: 'template', data: draft });
+          setMessage(t('Changes saved locally.'));
+          return;
+        }
         const number = (versions[0]?.data.number ?? 0) + 1;
         changes.push({
           id: crypto.randomUUID(),
           kind: 'snapshot',
-          data: { name, description, sections, templateId: id, number },
+          data: { ...blueprint, templateId: id, number },
         });
         changes.push({
           id,
@@ -564,35 +654,36 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
       <PageTitle
         title={template ? t('Edit checklist') : t('New checklist')}
         description={t(
-          'Configure the sections and questions inspectors will use in the field.',
+          conformity
+            ? 'Write one observable condition per item.'
+            : 'Configure the sections and questions inspectors will use in the field.',
         )}
         back={{ href: '/templates', label: t('Checklists') }}
         action={
           <>
-            {!template && !suggestion && (
-              <Link className="button secondary" href="/settings/ai">
-                {t('AI assistant')}
-              </Link>
-            )}
-            <Badge status={draft.status} />
+            {template && <Badge status={draft.status} />}
             {!archived && (
               <>
-                <button
-                  className="button secondary"
-                  disabled={working}
-                  onClick={() => void save('save')}
-                >
-                  {template ? t('Save changes') : t('Save draft')}
-                </button>
+                {!conformity && (
+                  <button
+                    className="button secondary"
+                    disabled={working}
+                    onClick={() => void save('save')}
+                  >
+                    {template ? t('Save changes') : t('Save draft')}
+                  </button>
+                )}
                 <button
                   className="button primary"
                   disabled={working}
                   onClick={() => void save('publish')}
                 >
                   <FileCheck2 size={18} />{' '}
-                  {versions.length
-                    ? t('Publish new version')
-                    : t('Publish checklist')}
+                  {draft.assessment === 'conformity'
+                    ? t('Save checklist')
+                    : versions.length
+                      ? t('Publish new version')
+                      : t('Publish checklist')}
                 </button>
               </>
             )}
@@ -610,7 +701,7 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
           {message}
         </div>
       )}
-      <div className="editor-layout">
+      <div className={template ? 'editor-layout' : 'checklist-editor-new'}>
         <div className="stack editor-main">
           <fieldset className="panel form-panel stack" disabled={archived}>
             <legend className="sr-only">{t('Checklist details')}</legend>
@@ -627,7 +718,11 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
               />
             </label>
             <label>
-              {t('Description')}{' '}
+              {t(
+                draft.assessment === 'conformity'
+                  ? 'Scope of the checklist'
+                  : 'Description',
+              )}{' '}
               <span className="optional">{t('Optional')}</span>
               <textarea
                 rows={3}
@@ -704,6 +799,7 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
                   question={question}
                   open={question.id === newQuestion || j === 0}
                   number={j + 1}
+                  conformity={draft.assessment === 'conformity'}
                   update={(item) =>
                     updateSection(i, {
                       ...section,
@@ -759,7 +855,12 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
                   });
                 }}
               >
-                <Plus size={17} /> {t('Add question')}
+                <Plus size={17} />{' '}
+                {t(
+                  draft.assessment === 'conformity'
+                    ? 'Add check'
+                    : 'Add question',
+                )}
               </button>
             </fieldset>
           ))}
@@ -777,72 +878,90 @@ export function TemplateEditor({ template }: { template?: Row<'template'> }) {
               <Plus size={17} /> {t('Add section')}
             </button>
           )}
+          {conformity && !archived && (
+            <div className="form-actions">
+              <button
+                className="button secondary"
+                disabled={working}
+                onClick={() => void save('save')}
+              >
+                {t('Save draft')}
+              </button>
+            </div>
+          )}
         </div>
-        <aside className="stack editor-aside">
-          <section className="panel form-panel stack">
-            <h2>{t('Published versions')}</h2>
-            <p className="muted small-copy">
-              {t(
-                'Inspections keep the version they started with. Publish changes to use them in a new inspection.',
-              )}
-            </p>
-            {versions.length ? (
-              versions.map((version) => (
-                <details key={version.id} className="version-details">
-                  <summary>
-                    <strong>
-                      {t('Version {number}', { number: version.data.number })}
-                    </strong>
-                    <small>{formatDate(version.updatedAt, locale)}</small>
-                  </summary>
-                  {version.data.sections.map((section) => (
-                    <div key={section.id}>
-                      <strong>{section.title}</strong>
-                      <ul>
-                        {section.questions.map((question) => (
-                          <li key={question.id}>{question.title}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </details>
-              ))
-            ) : (
-              <p className="muted small-copy">
-                {t('No versions published yet.')}
-              </p>
+        {template && (
+          <aside className="stack editor-aside">
+            {!archived && versions.length > 0 && (
+              <Link className="button primary" href={`/audits/new/${id}`}>
+                {t('Start inspection')}
+              </Link>
             )}
-          </section>
-          {template && (
             <section className="panel form-panel stack">
-              <h2>{t('Manage checklist')}</h2>
-              <button
-                className="button secondary"
-                disabled={working}
-                onClick={() => void save('duplicate')}
-              >
-                <Copy size={16} /> {t('Duplicate checklist')}
-              </button>
-              <button
-                className="button secondary"
-                disabled={working}
-                onClick={() => void save(archived ? 'restore' : 'archive')}
-              >
-                <Archive size={16} />{' '}
-                {archived ? t('Restore checklist') : t('Archive checklist')}
-              </button>
-              {!versions.length && (
-                <button
-                  className="button secondary danger-text"
-                  disabled={working}
-                  onClick={() => void save('delete')}
-                >
-                  <Trash2 size={16} /> {t('Delete draft')}
-                </button>
+              <h2>{t('Published versions')}</h2>
+              <p className="muted small-copy">
+                {t(
+                  'Inspections keep the version they started with. Publish changes to use them in a new inspection.',
+                )}
+              </p>
+              {versions.length ? (
+                versions.map((version) => (
+                  <details key={version.id} className="version-details">
+                    <summary>
+                      <strong>
+                        {t('Version {number}', { number: version.data.number })}
+                      </strong>
+                      <small>{formatDate(version.updatedAt, locale)}</small>
+                    </summary>
+                    {version.data.sections.map((section) => (
+                      <div key={section.id}>
+                        <strong>{section.title}</strong>
+                        <ul>
+                          {section.questions.map((question) => (
+                            <li key={question.id}>{question.title}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </details>
+                ))
+              ) : (
+                <p className="muted small-copy">
+                  {t('No versions published yet.')}
+                </p>
               )}
             </section>
-          )}
-        </aside>
+            {template && (
+              <section className="panel form-panel stack">
+                <h2>{t('Manage checklist')}</h2>
+                <button
+                  className="button secondary"
+                  disabled={working}
+                  onClick={() => void save('duplicate')}
+                >
+                  <Copy size={16} /> {t('Duplicate checklist')}
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={working}
+                  onClick={() => void save(archived ? 'restore' : 'archive')}
+                >
+                  <Archive size={16} />{' '}
+                  {archived ? t('Restore checklist') : t('Archive checklist')}
+                </button>
+                {!versions.length && (
+                  <button
+                    className="button secondary danger-text"
+                    disabled={working}
+                    onClick={() => void save('delete')}
+                  >
+                    <Trash2 size={16} /> {t('Delete draft')}
+                  </button>
+                )}
+              </section>
+            )}
+          </aside>
+        )}
       </div>
     </>
   );

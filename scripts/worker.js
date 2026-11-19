@@ -1,5 +1,6 @@
 /* global cacheName, paths */
 const cacheable = new Set(paths);
+const shell = paths[0];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -36,20 +37,24 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  const route = url.pathname.startsWith(shell)
+    ? url.pathname.slice(shell.length)
+    : null;
   if (
     request.mode === 'navigate' &&
-    /^\/(?:$|(?:login|register|recover|dashboard|templates|audits|findings|capa|reports|analytics|settings)(?:\/|$))/.test(
-      url.pathname,
+    route !== null &&
+    /^(?:$|(?:login|register|recover|dashboard|templates|audits|findings|capa|reports|analytics|settings)(?:\/|$))/.test(
+      route,
     )
   ) {
     event.respondWith(
       fetch(request).catch(() =>
-        caches.open(cacheName).then((cache) => cache.match('/')),
+        caches.open(cacheName).then((cache) => cache.match(shell)),
       ),
     );
   } else if (
     cacheable.has(url.pathname) &&
-    url.pathname !== '/' &&
+    url.pathname !== shell &&
     !url.search
   ) {
     event.respondWith(
