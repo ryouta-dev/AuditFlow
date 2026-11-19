@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.env*
+!.env.example
+next-env.d.ts
+*.tsbuildinfo
+public/sw.js
+playwright-report/
+test-results/
